@@ -1,0 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+
+:root {
+  --rice-green-50: #f0f9f0;
+  --rice-green-100: #dcf0dc;
+  --rice-green-500: #4caf50;
+  --rice-green-600: #3e8e41;
+  --rice-green-700: #2e7d32;
+  --rice-beige-50: #fcfaf5;
+  --rice-beige-100: #f8f2e5;
+  --rice-beige-200: #f1e6cc;
+  --rice-beige-600: #d4b678;
+  --rice-brown-500: #8d6e63;
+  --rice-brown-600: #795548;
+  --rice-brown-700: #5d4037;
+  --rice-brown-800: #4e342e;
+}
+/* Apply the custom colors to Tailwind classes */
+.bg-rice-green-50 { background-color: var(--rice-green-50); }
+.bg-rice-green-100 { background-color: var(--rice-green-100); }
+.bg-rice-green-500 { background-color: var(--rice-green-500); }
+.bg-rice-green-600 { background-color: var(--rice-green-600); }
+.bg-rice-green-700 { background-color: var(--rice-green-700); }
+.bg-rice-beige-50 { background-color: var(--rice-beige-50); }
+.bg-rice-beige-100 { background-color: var(--rice-beige-100); }
+.bg-rice-beige-200 { background-color: var(--rice-beige-200); }
+.bg-rice-beige-600 { background-color: var(--rice-beige-600); }
+.bg-rice-brown-500 { background-color: var(--rice-brown-500); }
+.bg-rice-brown-600 { background-color: var(--rice-brown-600); }
+.bg-rice-brown-700 { background-color: var(--rice-brown-700); }
+.bg-rice-brown-800 { background-color: var(--rice-brown-800); }
+.text-rice-green-50 { color: var(--rice-green-50); }
+.text-rice-green-100 { color: var(--rice-green-100); }
+.text-rice-green-500 { color: var(--rice-green-500); }
+.text-rice-green-600 { color: var(--rice-green-600); }
+.text-rice-green-700 { color: var(--rice-green-700); }
+.text-rice-beige-50 { color: var(--rice-beige-50); }
+.text-rice-beige-100 { color: var(--rice-beige-100); }
+.text-rice-beige-200 { color: var(--rice-beige-200); }
+.text-rice-beige-600 { color: var(--rice-beige-600); }
+.text-rice-brown-500 { color: var(--rice-brown-500); }
+.text-rice-brown-600 { color: var(--rice-brown-600); }
+.text-rice-brown-700 { color: var(--rice-brown-700); }
+.text-rice-brown-800 { color: var(--rice-brown-800); }
+.border-rice-beige-200 { border-color: var(--rice-beige-200); }
+.border-rice-green-500 { border-color: var(--rice-green-500); }
+/* General styles */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background-color: var(--rice-beige-50);
+  color: var(--rice-brown-800);
+}
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+/* Custom animation for processing status */
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+* {
+  font-family: 'Montserrat', sans-serif;
+}
