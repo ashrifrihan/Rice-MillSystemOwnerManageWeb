@@ -1,5 +1,8 @@
-// src/pages/TransportHistory.jsx - FINAL VERSION WITH DELIVERY PROOF
-import React, { useState } from 'react';
+// src/pages/TransportHistory.jsx - FIREBASE VERSION
+import React, { useState, useEffect } from 'react';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue } from 'firebase/database';
+import toast from 'react-hot-toast';
 import { 
   Truck, 
   Search, 
@@ -30,8 +33,8 @@ import {
   Share2
 } from 'lucide-react';
 
-// Enhanced mock data with delivery proof
-export const mockTransportHistory = {
+// Mock data kept as fallback
+const mockTransportHistory = {
   trips: [
     {
       id: 'TRP-2024-001',
@@ -736,13 +739,145 @@ export function TransportHistory() {
   const [selectedProofTrip, setSelectedProofTrip] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
   const [showProof, setShowProof] = useState(false);
+  const [trips, setTrips] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const filteredTrips = mockTransportHistory.trips.filter(trip => {
+  // Calculate KPI values from trips data
+  const calculateKPIs = () => {
+    const totalTrips = trips.length;
+    const proofUploaded = trips.filter(t => t.proofStatus === 'uploaded').length;
+    const proofPending = trips.filter(t => t.proofStatus === 'pending').length;
+    const proofRejected = trips.filter(t => t.proofStatus === 'rejected').length;
+
+    // Parse revenue and expenses
+    const totalRevenue = trips.reduce((sum, trip) => {
+      const rev = parseInt(trip.revenue?.replace(/[^\d]/g, '') || 0);
+      return sum + rev;
+    }, 0);
+
+    const totalExpenses = trips.reduce((sum, trip) => {
+      const exp = parseInt(trip.expenses?.replace(/[^\d]/g, '') || 0);
+      return sum + exp;
+    }, 0);
+
+    const totalProfit = totalRevenue - totalExpenses;
+
+    return {
+      totalTrips,
+      proofUploaded,
+      proofPending,
+      proofRejected,
+      totalRevenue: `Rs. ${totalRevenue.toLocaleString()}`,
+      totalExpenses: `Rs. ${totalExpenses.toLocaleString()}`,
+      totalProfit: `Rs. ${totalProfit.toLocaleString()}`
+    };
+  };
+
+  const kpis = calculateKPIs();
+
+  // Normalize trip data to handle different structures
+  const normalizeTripData = (trip) => {
+    if (!trip) return null;
+
+    return {
+      ...trip,
+      // Normalize customer info
+      customer: trip.customer || {
+        name: trip.orderDetails?.customerName || trip.orderDetails?.dealerName || 'Unknown Customer',
+        address: trip.orderDetails?.deliveryAddress || trip.orderDetails?.dealerAddress || trip.endLocation || 'No address',
+        phone: trip.orderDetails?.customerPhone || trip.orderDetails?.dealerPhone || '',
+        contactPerson: trip.orderDetails?.contactPerson || ''
+      },
+      // Normalize vehicle info
+      vehicle: trip.vehicle || trip.vehicleDetails || {
+        type: 'Vehicle',
+        capacity: trip.vehicleDetails?.capacity || 'Unknown',
+        number: trip.vehicleDetails?.vehicleNumber || 'Unknown'
+      },
+      // Normalize driver info
+      driver: trip.driver || trip.driverDetails || {
+        name: trip.driverDetails?.name || 'Unknown Driver',
+        phone: trip.driverDetails?.phone || '',
+        license: trip.driverDetails?.license || '',
+        rating: trip.driverDetails?.rating || 0,
+        photo: trip.driverDetails?.photo || ''
+      },
+      // Normalize products
+      products: trip.products || [],
+      // Normalize financial data
+      revenue: trip.revenue || 'Rs. 0',
+      expenses: trip.expenses || 'Rs. 0',
+      profit: trip.profit || 'Rs. 0',
+      // Normalize delivery proof
+      deliveryProof: trip.deliveryProof || null,
+      proofStatus: trip.proofStatus || 'pending',
+      // Normalize trip details with defaults
+      type: trip.type || 'Transport',
+      status: trip.status || 'Scheduled',
+      vehicleNumber: trip.vehicleNumber || 'Unknown',
+      startLocation: trip.startLocation || 'Unknown',
+      endLocation: trip.endLocation || 'Unknown',
+      startTime: trip.startTime || 'N/A',
+      endTime: trip.endTime || 'N/A',
+      deliveredAt: trip.deliveredAt || new Date().toISOString().split('T')[0] + ' N/A',
+      distance: trip.distance || 'Unknown',
+      duration: trip.duration || 'Unknown'
+    };
+  };
+
+  // Firebase Listener - Load transport history from transportHistory collection & trips collection
+  useEffect(() => {
+    setLoading(true);
+    
+    // Listen to completed trips from both transportHistory and completed trips
+    const historyRef = ref(db, 'transportHistory');
+    const tripsRef = ref(db, 'trips');
+    
+    const unsubscribeHistory = onValue(historyRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const completedTrips = Object.keys(data)
+          .map(key => normalizeTripData({ ...data[key], id: key }))
+          .filter(trip => trip.status === 'Delivered');
+        setTrips(completedTrips);
+        setLoading(false);
+      } else {
+        // Check regular trips as fallback
+        const tripsUnsubscribe = onValue(tripsRef, (tripsSnapshot) => {
+          if (tripsSnapshot.exists()) {
+            const tripsData = tripsSnapshot.val();
+            const completedTrips = Object.keys(tripsData)
+              .map(key => normalizeTripData({ ...tripsData[key], id: key }))
+              .filter(trip => trip.status === 'Delivered');
+            setTrips(completedTrips.length > 0 ? completedTrips : mockTransportHistory.trips);
+          } else {
+            setTrips(mockTransportHistory.trips);
+          }
+          setLoading(false);
+        }, (error) => {
+          console.error('Firebase trips error:', error);
+          setTrips(mockTransportHistory.trips);
+          setLoading(false);
+        });
+        
+        return () => tripsUnsubscribe();
+      }
+    }, (error) => {
+      console.error('Firebase history error:', error);
+      toast.error('Failed to load transport history');
+      setTrips(mockTransportHistory.trips);
+      setLoading(false);
+    });
+
+    return () => unsubscribeHistory();
+  }, []);
+
+  const filteredTrips = trips.filter(trip => {
     const matchesSearch = 
       trip.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trip.driver.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trip.vehicleNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      trip.customer.name.toLowerCase().includes(searchTerm.toLowerCase());
+      trip.driver?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      trip.vehicleNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      trip.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = filterStatus === 'all' || trip.status === filterStatus;
     const matchesType = filterType === 'all' || trip.type === filterType;
@@ -820,28 +955,28 @@ export function TransportHistory() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <KpiCard 
               title="Total Trips" 
-              value={mockTransportHistory.summary.totalTrips} 
-              subtitle="Completed deliveries" 
+              value={kpis.totalTrips} 
+              subtitle="All transport deliveries" 
               icon={Truck} 
               color="bg-gradient-to-br from-blue-500 to-indigo-600" 
             />
             <KpiCard 
               title="Proof Uploaded" 
-              value={mockTransportHistory.summary.proofUploaded} 
+              value={kpis.proofUploaded} 
               subtitle="Verified deliveries" 
               icon={FileCheck} 
               color="bg-gradient-to-br from-emerald-500 to-teal-600" 
             />
             <KpiCard 
               title="Total Revenue" 
-              value={mockTransportHistory.summary.totalRevenue} 
+              value={kpis.totalRevenue} 
               subtitle="Transport earnings" 
               icon={FileText} 
               color="bg-gradient-to-br from-purple-500 to-pink-600" 
             />
             <KpiCard 
               title="Net Profit" 
-              value={mockTransportHistory.summary.totalProfit} 
+              value={kpis.totalProfit} 
               subtitle="After all expenses" 
               icon={CheckCircle} 
               color="bg-gradient-to-br from-amber-500 to-orange-600" 
@@ -953,7 +1088,7 @@ export function TransportHistory() {
                   <tr key={trip.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="font-medium text-gray-900">{trip.id}</div>
-                      <div className="text-sm text-gray-500">Delivered: {trip.deliveredAt.split(' ')[0]}</div>
+                      <div className="text-sm text-gray-500">Delivered: {(trip.deliveredAt || 'N/A').split(' ')[0]}</div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -962,23 +1097,23 @@ export function TransportHistory() {
                         </div>
                         <div>
                           <div className="font-medium text-gray-900">{trip.vehicleNumber}</div>
-                          <div className="text-sm text-gray-600">{trip.driver.name}</div>
+                          <div className="text-sm text-gray-600">{trip.driver?.name || 'Unknown'}</div>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="font-medium text-gray-900">{trip.customer.name}</div>
-                      <div className="text-sm text-gray-600 truncate max-w-xs">{trip.endLocation}</div>
+                      <div className="font-medium text-gray-900">{trip.customer?.name || 'Unknown'}</div>
+                      <div className="text-sm text-gray-600 truncate max-w-xs">{trip.endLocation || 'Unknown'}</div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
                         <MapPin className="h-3 w-3" />
-                        {trip.distance} • 
+                        {trip.distance || 'Unknown'} • 
                         <Clock className="h-3 w-3 ml-2" />
-                        {trip.duration}
+                        {trip.duration || 'Unknown'}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="font-medium text-gray-900">{trip.deliveredAt.split(' ')[0]}</div>
-                      <div className="text-sm text-gray-500">{trip.deliveredAt.split(' ')[1]}</div>
+                      <div className="font-medium text-gray-900">{(trip.deliveredAt || 'N/A').split(' ')[0]}</div>
+                      <div className="text-sm text-gray-500">{(trip.deliveredAt || 'N/A').split(' ')[1] || 'N/A'}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <TypeBadge type={trip.type} />

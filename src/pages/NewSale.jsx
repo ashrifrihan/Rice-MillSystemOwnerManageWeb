@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Plus, 
@@ -21,11 +21,18 @@ import {
   Layers
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import inventoryUpdateService from '../services/inventoryUpdateService';
+import { ref, get, onValue, set, update } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 
 export default function NewSale() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user) || 'owner@colombomill.lk';
 
-  const [customer, setCustomer] = useState('');
+  const [selectedCustomerName, setSelectedCustomerName] = useState('');
   const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -43,27 +50,37 @@ export default function NewSale() {
     }
   ]);
 
-  const products = [
-    { name: 'Samba Rice Premium', price: 350, stock: 3500, unit: 'kg', category: 'Premium' },
-    { name: 'Nadu Rice', price: 280, stock: 7500, unit: 'kg', category: 'Regular' },
-    { name: 'Kekulu Rice', price: 320, stock: 1200, unit: 'kg', category: 'Regular' },
-    { name: 'Red Rice', price: 400, stock: 450, unit: 'kg', category: 'Special' },
-    { name: 'Basmati Rice', price: 550, stock: 3450, unit: 'kg', category: 'Premium' },
-    { name: 'Parboiled Rice', price: 300, stock: 2800, unit: 'kg', category: 'Regular' },
-    { name: 'Keeri Samba', price: 380, stock: 1200, unit: 'kg', category: 'Premium' },
-    { name: 'Sudu Kakulu', price: 290, stock: 5000, unit: 'kg', category: 'Regular' }
-  ];
+  const [products, setProducts] = useState([]);
 
-  const customers = [
-    { name: 'Lanka Foods Ltd', type: 'Wholesaler', creditLimit: 5000000, pending: 1250000 },
-    { name: 'Cargills Food City', type: 'Retail Chain', creditLimit: 3000000, pending: 450000 },
-    { name: 'Keells Super', type: 'Retail Chain', creditLimit: 4000000, pending: 1200000 },
-    { name: 'Arpico Supercentre', type: 'Retail Chain', creditLimit: 2500000, pending: 350000 },
-    { name: 'Pelwatte Dairy', type: 'Manufacturer', creditLimit: 2000000, pending: 0 },
-    { name: 'Ceylon Tea Traders', type: 'Exporter', creditLimit: 10000000, pending: 2500000 },
-    { name: 'Colombo Restaurant Group', type: 'Restaurant', creditLimit: 1500000, pending: 450000 },
-    { name: 'Galle Fort Hotels', type: 'Hotel', creditLimit: 1800000, pending: 600000 }
-  ];
+  const [customers, setCustomers] = useState([]);
+
+  // Load customers from Firebase realtime
+  useEffect(() => {
+    let unsub = null;
+    const load = async () => {
+      try {
+        const snapshot = await get(ref(db, 'customers'));
+        if (snapshot.exists()) {
+          const list = filterSnapshotByOwner(snapshot, userEmail);
+          setCustomers(list);
+        }
+
+        unsub = onValue(ref(db, 'customers'), snap => {
+          if (snap.exists()) {
+            const list = filterSnapshotByOwner(snap, userEmail);
+            setCustomers(list);
+          } else {
+            setCustomers([]);
+          }
+        });
+      } catch (err) {
+        console.error('Failed to load customers for NewSale:', err);
+      }
+    };
+
+    load();
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [userEmail]);
 
   const paymentMethods = [
     { id: 'cash', name: 'Cash', icon: FileText },
@@ -95,16 +112,20 @@ export default function NewSale() {
     setItems(prev => prev.map(item => {
       if (item.id === id) {
         const updated = { ...item, [field]: value };
-        
+
         if (field === 'product') {
-          const prod = products.find(p => p.name === value);
+          // value is product id
+          const prod = products.find(p => p.id === value);
           if (prod) {
-            updated.price = prod.price.toString();
-            updated.availableStock = prod.stock;
-            updated.unit = prod.unit;
+            updated.price = (prod.price_per_kg || prod.price || prod.price_per_kg || 0).toString();
+            updated.availableStock = prod.current_stock ?? prod.stock ?? 0;
+            updated.unit = prod.unit || 'kg';
+            updated.productName = prod.name || prod.productName || '';
+          } else {
+            updated.productName = '';
           }
         }
-        
+
         if (field === 'qty' || field === 'price' || field === 'product') {
           const qty = parseFloat(updated.qty) || 0;
           const price = parseFloat(updated.price) || 0;
@@ -117,6 +138,26 @@ export default function NewSale() {
     }));
   };
 
+  // Load products from Firebase
+  useEffect(() => {
+    let unsub = null;
+    const load = async () => {
+      try {
+        const prods = await inventoryUpdateService.getAllProducts();
+        setProducts(prods);
+
+        // subscribe to realtime updates
+        unsub = inventoryUpdateService.setupRealtimeListener((updated) => {
+          setProducts(updated);
+        });
+      } catch (err) {
+        console.error('Failed to load products for NewSale:', err);
+      }
+    };
+    load();
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, []);
+
   const calculateSummary = () => {
     const subtotal = items.reduce((sum, i) => sum + i.total, 0);
     const discount = subtotal * 0.02; // 2% discount
@@ -124,9 +165,10 @@ export default function NewSale() {
     const nbt = (subtotal - discount) * 0.02; // 2% NBT (Sri Lanka)
     const total = subtotal + vat + nbt - discount;
     
-    const selectedCustomer = customers.find(c => c.name === customer);
-    const creditUsed = selectedCustomer ? selectedCustomer.pending + total : total;
-    const creditAvailable = selectedCustomer ? selectedCustomer.creditLimit - creditUsed : 0;
+    const selectedCustomer = customers.find(c => c.name === selectedCustomerName);
+    const pending = selectedCustomer ? (selectedCustomer.pendingAmount ?? selectedCustomer.pending ?? 0) : 0;
+    const creditUsed = selectedCustomer ? pending + total : total;
+    const creditAvailable = selectedCustomer ? (selectedCustomer.creditLimit || 0) - creditUsed : 0;
     
     return {
       subtotal,
@@ -183,8 +225,14 @@ export default function NewSale() {
                     Select Customer
                   </label>
                   <select 
-                    value={customer}
-                    onChange={(e) => setCustomer(e.target.value)}
+                    value={selectedCustomerName}
+                    onChange={(e) => {
+                      const selectedName = e.target.value;
+                      console.log('Customer selected:', selectedName);
+                      const selectedCust = customers.find(c => c.name === selectedName);
+                      console.log('Found customer:', selectedCust);
+                      setSelectedCustomerName(selectedName);
+                    }}
                     className="w-full px-3 py-2.5 bg-gray-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all border border-gray-300"
                   >
                     <option value="">Choose a customer...</option>
@@ -196,13 +244,13 @@ export default function NewSale() {
                   </select>
                 </div>
 
-                {customer && (
+                {selectedCustomerName && (
                   <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
                     <div className="flex items-center justify-between mb-3">
                       <div>
-                        <p className="font-bold text-gray-900">{customer}</p>
+                        <p className="font-bold text-gray-900">{selectedCustomerName}</p>
                         <p className="text-xs text-gray-600">
-                          {customers.find(c => c.name === customer)?.type}
+                          {customers.find(c => c.name === selectedCustomerName)?.type}
                         </p>
                       </div>
                       <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
@@ -346,18 +394,18 @@ export default function NewSale() {
                       className="grid grid-cols-12 gap-3 p-4 bg-gray-50/50 rounded-lg border border-gray-200 hover:border-blue-300 transition-all"
                     >
                       <div className="col-span-5">
-                        <select
-                          value={item.product}
-                          onChange={(e) => updateItem(item.id, 'product', e.target.value)}
-                          className="w-full px-3 py-2.5 bg-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-300"
-                        >
-                          <option value="">Select a product...</option>
-                          {products.map(p => (
-                            <option key={p.name} value={p.name}>
-                              {p.name} • {formatCurrency(p.price)}/{p.unit} • Stock: {p.stock.toLocaleString()} {p.unit}
-                            </option>
-                          ))}
-                        </select>
+                            <select
+                              value={item.product}
+                              onChange={(e) => updateItem(item.id, 'product', e.target.value)}
+                              className="w-full px-3 py-2.5 bg-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-300"
+                            >
+                              <option value="">Select a product...</option>
+                              {products.map(p => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} • Rs.{(p.price_per_kg || p.price || 0)}/kg • Stock: {(p.current_stock ?? p.stock ?? 0).toLocaleString()} kg
+                                </option>
+                              ))}
+                            </select>
                         
                         {item.product && (
                           <div className="flex items-center gap-1.5 mt-1.5">
@@ -369,7 +417,7 @@ export default function NewSale() {
                               stockStatus === 'critical' ? 'text-red-600' :
                               stockStatus === 'warning' ? 'text-amber-600' : 'text-green-600'
                             }`}>
-                              {item.availableStock.toLocaleString()} {item.unit} available
+                              {(item.availableStock || 0).toLocaleString()} {item.unit} available
                             </span>
                           </div>
                         )}
@@ -532,7 +580,100 @@ export default function NewSale() {
                     >
                       Cancel
                     </button>
-                    <button className="px-5 py-2 bg-white text-emerald-700 rounded-lg font-bold hover:shadow-lg transition flex items-center gap-2 text-sm">
+                    <button
+                      onClick={async () => {
+                        console.log('Creating order with selectedCustomerName:', selectedCustomerName);
+                        if (!selectedCustomerName) {
+                          alert('Please select a customer before creating the sale.');
+                          return;
+                        }
+                        const validItems = items.filter(i => i.product && (parseFloat(i.qty) || 0) > 0);
+                        if (validItems.length === 0) {
+                          alert('Please add at least one sale item with quantity.');
+                          return;
+                        }
+
+                        try {
+                          // Create a reference for this order
+                          const orderRef = `SO-${new Date().getFullYear()}-${Date.now()}`;
+
+                          // Record each sale as a stock update
+                          await Promise.all(validItems.map(i => {
+                            return inventoryUpdateService.recordStockUpdate({
+                              productId: i.product,
+                              productName: i.productName || '',
+                              transactionType: 'Sale',
+                              quantity: i.qty,
+                              unit: i.unit || 'kg',
+                              warehouse: 'Warehouse A',
+                              customer: selectedCustomerName,
+                              reference: orderRef,
+                              notes: notes || `Sale created via NewSale (${orderRef})`,
+                              user: 'System'
+                            });
+                          }));
+
+                          console.log('selectedCustomerName at order creation:', selectedCustomerName);
+                          console.log('customers array:', customers);
+                          const selectedCustomer = customers.find(c => c.name === selectedCustomerName);
+                          console.log('Selected customer:', selectedCustomer);
+                          console.log('Customer address:', selectedCustomer?.address);
+                          console.log('All customers:', customers.map(c => ({ id: c.id, name: c.name, address: c.address })));
+                          
+                          // Ensure we have the customer address
+                          const customerAddress = selectedCustomer?.address || '';
+                          console.log('Final customer address to save:', customerAddress);
+                          
+                          const orderObj = {
+                                      id: orderRef,
+                                      status: 'pending',                     // 🔥 REQUIRED
+                                      placedOn: new Date().toISOString(),     // 🔥 REQUIRED
+                                      owner_email: userEmail,
+                                      type: 'delivery',                       // 🔥 REQUIRED for AssignTransport
+
+                                      dealerName: selectedCustomerName,       // Orders page expects this
+                                      dealerId: selectedCustomer?.id || selectedCustomerName,
+                                      dealerAddress: customerAddress,        // 🔥 Add customer address
+                                      deliveryAddress: customerAddress,      // 🔥 REQUIRED for AssignTransport
+                                      placedBy: 'System',
+
+                                      deliveryDate: deliveryDate || null,
+                                      paymentTerms: paymentMethod,
+                                      notes,
+
+                                      totalAmount: summary.total,             // 🔥 MUST MATCH Orders page
+
+                                      items: validItems.map(i => ({
+                                        name: i.productName || '',
+                                        quantity: Number(i.qty),
+                                        unit: i.unit,
+                                        price: Number(i.price),
+                                        subtotal: i.total
+                                      }))
+                                    };
+
+                          await set(ref(db, `orders/${orderRef}`), orderObj);
+
+                          // Update customer aggregates: pendingAmount, totalSpent, lastOrder
+                          if (selectedCustomer) {
+                            const newPending = (selectedCustomer.pendingAmount ?? selectedCustomer.pending ?? 0) + summary.total;
+                            const newTotalSpent = (selectedCustomer.totalSpent ?? 0) + summary.total;
+                            await update(ref(db, `customers/${selectedCustomer.id}`), {
+                              pendingAmount: newPending,
+                              totalSpent: newTotalSpent,
+                              lastOrder: saleDate
+                            }).catch(err => console.error('Failed to update customer aggregates', err));
+                          }
+
+                          alert('Sale recorded successfully');
+                          navigate('/orders');
+                        } catch (err) {
+                          console.error('Failed to create sale order', err);
+                          alert('Failed to record sale. See console for details.');
+                        }
+                      }}
+                      className="px-5 py-2 bg-white text-emerald-700 rounded-lg font-bold hover:shadow-lg transition flex items-center gap-2 text-sm"
+                    >
                       <CheckCircle className="h-4 w-4" />
                       Create Sale Order
                     </button>

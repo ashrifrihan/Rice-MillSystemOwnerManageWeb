@@ -1,5 +1,10 @@
 // src/pages/VehiclesList.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { ref, onValue, set, update, get, push, remove } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 import { 
   Truck, 
   Search, 
@@ -61,6 +66,9 @@ import {
 } from 'lucide-react';
 
 export function VehiclesList() {
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
+  
   const [viewMode, setViewMode] = useState('grid');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
@@ -72,193 +80,59 @@ export function VehiclesList() {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showResubmitModal, setShowResubmitModal] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [vehicles, setVehicles] = useState([]);
+  const [loading, setLoading] = useState(true);
   const itemsPerPage = 12;
 
   // Current user role (change this based on actual auth)
   const currentUserRole = 'owner'; // Change to 'admin' or 'owner'
   const currentUserName = currentUserRole === 'admin' ? 'Admin User' : 'Rice Mill Owner';
 
-  // Mock data with images
-  const [vehicles, setVehicles] = useState([
-    {
-      id: 'V001',
-      vehicleNumber: 'WP CAB 1234',
-      type: 'Lorry',
-      capacity: '5000 kg',
-      driver: 'Rajesh Kumar',
-      driverContact: '077-1234567',
-      status: 'Active',
-      approvalStatus: 'Approved',
-      insuranceExpiry: '2024-06-30',
-      insuranceStatus: 'valid',
-      addedOn: '2023-01-15',
-      lastEdited: '2023-11-20',
-      addedBy: 'Rice Mill Owner',
-      approvedBy: 'Admin User',
-      approvedOn: '2023-01-20',
-      fuelType: 'Diesel',
-      vehicleImage: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=400&h=300&fit=crop',
-      documents: [
-        { name: 'registration.pdf', type: 'pdf', uploadedOn: '2023-01-15' },
-        { name: 'insurance.pdf', type: 'pdf', uploadedOn: '2023-01-15' },
-        { name: 'vehicle_photo.jpg', type: 'image', uploadedOn: '2023-01-15' }
-      ],
-      totalTrips: 156,
-      currentLocation: 'Colombo Fort',
-      editRequests: [],
-      chassisNumber: 'TATA1612X1234567',
-      engineNumber: 'CRDE4D34T56789',
-      registrationDate: '2022-01-15',
-      ownerName: 'Mills Rice Mill',
-      ownerContact: '011-2345678',
-      assignedRoute: 'Colombo-Kandy',
-      trackerId: 'GPS-001',
-      mileage: '8.5 km/l',
-      lastService: '2023-10-15',
-      nextServiceDue: '2024-01-15',
-      fuelConsumption: 125.5,
-      monthlyRevenue: 245000,
-      maintenanceCost: 12500
-    },
-    {
-      id: 'V002',
-      vehicleNumber: 'WP KA 5678',
-      type: 'Mini Lorry',
-      capacity: '2000 kg',
-      driver: 'Not Assigned',
-      driverContact: 'N/A',
-      status: 'Pending Approval',
-      approvalStatus: 'Pending',
-      insuranceExpiry: '2024-05-15',
-      insuranceStatus: 'expiring',
-      addedOn: '2023-11-25',
-      lastEdited: '2023-11-25',
-      addedBy: 'Rice Mill Owner',
-      approvedBy: null,
-      approvedOn: null,
-      fuelType: 'Petrol',
-      vehicleImage: 'https://images.unsplash.com/photo-1557229057-f1342e5829d2?w=400&h=300&fit=crop',
-      documents: [
-        { name: 'registration.pdf', type: 'pdf', uploadedOn: '2023-11-25' }
-      ],
-      totalTrips: 0,
-      currentLocation: 'Mill Yard',
-      editRequests: [],
-      chassisNumber: 'TOYOHLX12345678',
-      engineNumber: '1GD-FTV67890',
-      registrationDate: '2022-03-20',
-      ownerName: 'Mills Rice Mill',
-      ownerContact: '011-2345678',
-      assignedRoute: 'Colombo-Galle',
-      trackerId: 'GPS-002',
-      mileage: '12 km/l',
-      lastService: '2023-09-20',
-      nextServiceDue: '2023-12-20',
-      fuelConsumption: 45.2,
-      monthlyRevenue: 0,
-      maintenanceCost: 8500
-    },
-    {
-      id: 'V003',
-      vehicleNumber: 'NP AB 9012',
-      type: 'Three-wheel',
-      capacity: '500 kg',
-      driver: 'Kamal Perera',
-      driverContact: '077-3456789',
-      status: 'Edit Request',
-      approvalStatus: 'Edit Pending',
-      insuranceExpiry: '2024-07-31',
-      insuranceStatus: 'valid',
-      addedOn: '2022-11-10',
-      lastEdited: '2023-11-28',
-      addedBy: 'Rice Mill Owner',
-      approvedBy: 'Admin User',
-      approvedOn: '2022-11-15',
-      fuelType: 'Petrol',
-      vehicleImage: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=300&fit=crop',
-      documents: [
-        { name: 'registration.pdf', type: 'pdf', uploadedOn: '2022-11-10' },
-        { name: 'insurance.pdf', type: 'pdf', uploadedOn: '2022-11-10' }
-      ],
-      totalTrips: 89,
-      currentLocation: 'Kandy Road',
-      editRequests: [
-        {
-          field: 'capacity',
-          oldValue: '300 kg',
-          newValue: '500 kg',
-          requestedBy: 'Rice Mill Owner',
-          requestedOn: '2023-11-28',
-          reason: 'Upgraded vehicle capacity'
-        }
-      ],
-      chassisNumber: 'ASHLEY1234567',
-      engineNumber: 'H-SERIES78901',
-      registrationDate: '2021-11-10',
-      ownerName: 'Mills Rice Mill',
-      ownerContact: '011-2345678',
-      assignedRoute: 'Colombo-Jaffna',
-      trackerId: 'GPS-003',
-      mileage: '6.5 km/l',
-      lastService: '2023-08-10',
-      nextServiceDue: '2023-11-10',
-      fuelConsumption: 65.8,
-      monthlyRevenue: 123500,
-      maintenanceCost: 7500
-    },
-    {
-      id: 'V004',
-      vehicleNumber: 'CP XY 3456',
-      type: 'Container Truck',
-      capacity: '10000 kg',
-      driver: 'Anil Fernando',
-      driverContact: '077-4567890',
-      status: 'Rejected',
-      approvalStatus: 'Rejected',
-      insuranceExpiry: '2024-08-20',
-      insuranceStatus: 'valid',
-      addedOn: '2023-11-22',
-      lastEdited: '2023-11-25',
-      addedBy: 'Rice Mill Owner',
-      approvedBy: null,
-      approvedOn: null,
-      fuelType: 'Diesel',
-      vehicleImage: 'https://images.unsplash.com/photo-1557844352-761f16da8c67?w=400&h=300&fit=crop',
-      documents: [
-        { name: 'registration.pdf', type: 'pdf', uploadedOn: '2023-11-22' }
-      ],
-      totalTrips: 0,
-      currentLocation: 'Mill Yard',
-      rejectionReason: 'Incomplete documentation. Please upload insurance certificate.',
-      editRequests: [],
-      chassisNumber: 'ASHLEY3456789',
-      engineNumber: 'H-SERIES90123',
-      registrationDate: '2021-12-10',
-      ownerName: 'Mills Rice Mill',
-      ownerContact: '011-2345678',
-      assignedRoute: 'Colombo-Trincomalee',
-      trackerId: 'GPS-004',
-      mileage: '5.5 km/l',
-      lastService: '2023-07-10',
-      nextServiceDue: '2023-10-10',
-      fuelConsumption: 185.3,
-      monthlyRevenue: 0,
-      maintenanceCost: 15000
-    }
-  ]);
+  // FIREBASE LISTENER - Load vehicles from Firebase
+  useEffect(() => {
+    setLoading(true);
+    const vehiclesRef = ref(db, 'vehicles');
+    
+    const unsubscribe = onValue(vehiclesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const vehiclesList = Object.keys(data).map(key => ({
+          id: key,
+          ...data[key]
+        }));
+        setVehicles(vehiclesList);
+      } else {
+        setVehicles([]);
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error('Firebase error:', error);
+      toast.error('Failed to load vehicles');
+      setLoading(false);
+    });
 
-  // Mock dashboard data - Added missing state
-  const [dashboardData] = useState({
-    totalVehicles: 24,
-    activeVehicles: 18,
-    pendingApprovals: 4,
-    underMaintenance: 2,
-    insuranceExpiring: 3,
-    maintenanceAlerts: 2
-  });
+    return () => unsubscribe();
+  }, []);
+
+  // Computed dashboard data from Firebase vehicles
+  const dashboardData = {
+    totalVehicles: vehicles.length,
+    activeVehicles: vehicles.filter(v => v.status === 'Active').length,
+    pendingApprovals: vehicles.filter(v => v.approvalStatus === 'Pending').length,
+    underMaintenance: vehicles.filter(v => v.status === 'Maintenance').length,
+    insuranceExpiring: vehicles.filter(v => {
+      if (!v.insuranceExpiry) return false;
+      const expiryDate = new Date(v.insuranceExpiry);
+      const thirtyDaysFromNow = new Date();
+      thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+      return expiryDate <= thirtyDaysFromNow;
+    }).length,
+    maintenanceAlerts: vehicles.filter(v => v.maintenanceAlerts && v.maintenanceAlerts.length > 0).length
+  };
 
   const [newVehicle, setNewVehicle] = useState({
     vehicleNumber: '',
@@ -286,8 +160,8 @@ export function VehiclesList() {
   // Filter vehicles
   const filteredVehicles = vehicles.filter(vehicle => {
     const matchesSearch = 
-      vehicle.vehicleNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.type.toLowerCase().includes(searchTerm.toLowerCase());
+      (vehicle.vehicleNumber?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (vehicle.type?.toLowerCase() || '').includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'All' || vehicle.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
@@ -301,6 +175,8 @@ export function VehiclesList() {
   const getStatusColor = (status) => {
     switch (status) {
       case 'Active': return 'bg-emerald-100 text-emerald-800';
+      case 'Available': return 'bg-green-100 text-green-800';
+      case 'On Trip': return 'bg-blue-100 text-blue-800';
       case 'Pending Approval': return 'bg-amber-100 text-amber-800';
       case 'Edit Request': return 'bg-orange-100 text-orange-800';
       case 'Rejected': return 'bg-red-100 text-red-800';
@@ -420,72 +296,95 @@ export function VehiclesList() {
   };
 
   const handleAssignClick = (vehicle) => {
+    // VehiclesList responsibility: ONLY navigate to assignment page
+    // AssignTransport.jsx handles all trip creation logic
+    navigate(`/assign-transport?vehicleId=${vehicle.id}`);
+  };
+
+  const handleStatusClick = (vehicle) => {
     setSelectedVehicle(vehicle);
-    setShowAssignModal(true);
+    setShowStatusModal(true);
   };
 
   // Handle form submissions
-  const handleAddVehicle = () => {
+  const handleAddVehicle = async () => {
     if (!imagePreview) {
-      alert('Please upload a vehicle image');
+      toast.error('Please upload a vehicle image');
       return;
     }
 
     if (!newVehicle.vehicleNumber || !newVehicle.capacity) {
-      alert('Please fill in all required fields');
+      toast.error('Please fill in all required fields');
       return;
     }
 
-    const newVehicleData = {
-      id: `V${String(vehicles.length + 1).padStart(3, '0')}`,
-      ...newVehicle,
-      vehicleImage: imagePreview,
-      driver: 'Not Assigned',
-      driverContact: 'N/A',
-      status: 'Pending Approval',
-      approvalStatus: 'Pending',
-      insuranceStatus: 'valid',
-      addedOn: new Date().toISOString().split('T')[0],
-      lastEdited: new Date().toISOString().split('T')[0],
-      addedBy: currentUserName,
-      approvedBy: null,
-      approvedOn: null,
-      documents: uploadedDocuments.map(doc => ({
-        name: doc.name,
-        type: doc.type,
-        uploadedOn: new Date().toISOString().split('T')[0]
-      })),
-      totalTrips: 0,
-      currentLocation: 'Mill Yard',
-      editRequests: [],
-      mileage: '0 km/l',
-      lastService: new Date().toISOString().split('T')[0]
-    };
+    try {
+      const newVehicleRef = push(ref(db, 'vehicles'));
+      const newVehicleData = {
+        vehicleNumber: newVehicle.vehicleNumber,
+        type: newVehicle.type,
+        capacity: newVehicle.capacity,
+        fuelType: newVehicle.fuelType,
+        vehicleModel: newVehicle.vehicleModel,
+        chassisNumber: newVehicle.chassisNumber,
+        engineNumber: newVehicle.engineNumber,
+        registrationDate: newVehicle.registrationDate,
+        insuranceExpiry: newVehicle.insuranceExpiry,
+        assignedRoute: newVehicle.assignedRoute,
+        trackerId: newVehicle.trackerId,
+        ownerName: newVehicle.ownerName,
+        ownerContact: newVehicle.ownerContact,
+        vehicleImage: imagePreview,
+        driver: 'Not Assigned',
+        driverContact: 'N/A',
+        status: 'Pending Approval',
+        approvalStatus: 'Pending',
+        insuranceStatus: 'valid',
+        addedOn: new Date().toISOString().split('T')[0],
+        lastEdited: new Date().toISOString().split('T')[0],
+        addedBy: currentUserName,
+        approvedBy: null,
+        approvedOn: null,
+        documents: uploadedDocuments.map(doc => ({
+          name: doc.name,
+          type: doc.type,
+          uploadedOn: new Date().toISOString().split('T')[0]
+        })),
+        totalTrips: 0,
+        currentLocation: 'Mill Yard',
+        editRequests: [],
+        mileage: '0 km/l',
+        lastService: new Date().toISOString().split('T')[0]
+      };
 
-    setVehicles([...vehicles, newVehicleData]);
-    setNewVehicle({
-      vehicleNumber: '',
-      type: 'Lorry',
-      capacity: '',
-      fuelType: 'Diesel',
-      vehicleModel: '',
-      chassisNumber: '',
-      engineNumber: '',
-      registrationDate: '',
-      insuranceExpiry: '',
-      assignedRoute: '',
-      trackerId: '',
-      ownerName: 'Mills Rice Mill',
-      ownerContact: '011-2345678',
-      vehicleImage: null
-    });
-    setImagePreview(null);
-    setUploadedImage(null);
-    setUploadedDocuments([]);
-    setShowAddModal(false);
-    
-    // Show success popup
-    showPopupMessage('Vehicle submitted successfully for admin approval!');
+      await set(newVehicleRef, newVehicleData);
+
+      setNewVehicle({
+        vehicleNumber: '',
+        type: 'Lorry',
+        capacity: '',
+        fuelType: 'Diesel',
+        vehicleModel: '',
+        chassisNumber: '',
+        engineNumber: '',
+        registrationDate: '',
+        insuranceExpiry: '',
+        assignedRoute: '',
+        trackerId: '',
+        ownerName: 'Mills Rice Mill',
+        ownerContact: '011-2345678',
+        vehicleImage: null
+      });
+      setImagePreview(null);
+      setUploadedImage(null);
+      setUploadedDocuments([]);
+      setShowAddModal(false);
+      
+      toast.success('Vehicle submitted successfully for admin approval!');
+    } catch (error) {
+      console.error('Error adding vehicle:', error);
+      toast.error('Failed to add vehicle');
+    }
   };
 
   // KPI Card Component - NOT CHANGED as requested
@@ -514,121 +413,137 @@ export function VehiclesList() {
     </div>
   );
 
-  const handleEditSubmit = () => {
+  const handleEditSubmit = async () => {
     // Create edit request instead of direct edit
-    const updatedVehicles = vehicles.map(v => 
-      v.id === selectedVehicle.id 
-        ? { 
-            ...v, 
-            status: 'Edit Request',
-            approvalStatus: 'Edit Pending',
-            lastEdited: new Date().toISOString().split('T')[0],
-            editRequests: [
-              ...v.editRequests,
-              {
-                field: 'capacity',
-                oldValue: v.capacity,
-                newValue: editForm.capacity,
-                requestedBy: currentUserName,
-                requestedOn: new Date().toISOString().split('T')[0],
-                reason: 'Requested edit'
-              }
-            ]
-          }
-        : v
-    );
+    try {
+      const vehicleRef = ref(db, `vehicles/${selectedVehicle.id}`);
+      
+      const existingEditRequests = selectedVehicle.editRequests || [];
+      const newEditRequest = {
+        field: 'capacity',
+        oldValue: selectedVehicle.capacity,
+        newValue: editForm.capacity,
+        requestedBy: currentUserName,
+        requestedOn: new Date().toISOString().split('T')[0],
+        reason: 'Requested edit'
+      };
 
-    setVehicles(updatedVehicles);
-    setShowEditModal(false);
-    
-    // Show success popup
-    showPopupMessage('Edit request submitted for admin approval.');
+      await update(vehicleRef, {
+        status: 'Edit Request',
+        approvalStatus: 'Edit Pending',
+        lastEdited: new Date().toISOString().split('T')[0],
+        editRequests: [...existingEditRequests, newEditRequest]
+      });
+
+      setShowEditModal(false);
+      
+      toast.success('Edit request submitted for admin approval.');
+    } catch (error) {
+      console.error('Error submitting edit request:', error);
+      toast.error('Failed to submit edit request');
+    }
   };
 
-  const handleApproveVehicle = () => {
+  const handleApproveVehicle = async () => {
     // Only admin can approve
     if (currentUserRole !== 'admin') {
-      alert('Only admin users can approve vehicles.');
+      toast.error('Only admin users can approve vehicles.');
       return;
     }
 
-    const updatedVehicles = vehicles.map(v => 
-      v.id === selectedVehicle.id 
-        ? { 
-            ...v, 
-            status: v.status === 'Edit Request' ? 'Active' : 'Active',
-            approvalStatus: 'Approved',
-            approvedBy: currentUserName,
-            approvedOn: new Date().toISOString().split('T')[0],
-            // If it was an edit request, apply the changes
-            ...(v.status === 'Edit Request' && v.editRequests.length > 0 && {
-              capacity: v.editRequests[0].newValue
-            })
-          }
-        : v
-    );
+    try {
+      const vehicleRef = ref(db, `vehicles/${selectedVehicle.id}`);
+      const updateData = {
+        status: selectedVehicle.status === 'Edit Request' ? 'Active' : 'Active',
+        approvalStatus: ' ',
+        approvedBy: currentUserName,
+        approvedOn: new Date().toISOString().split('T')[0]
+      };
 
-    setVehicles(updatedVehicles);
-    setShowApproveModal(false);
-    
-    // Show success popup
-    showPopupMessage('Vehicle approved successfully!');
+      // If it was an edit request, apply the changes
+      if (selectedVehicle.status === 'Edit Request' && selectedVehicle.editRequests?.length > 0) {
+        updateData.capacity = selectedVehicle.editRequests[0].newValue;
+      }
+
+      await update(vehicleRef, updateData);
+      setShowApproveModal(false);
+      
+      toast.success('Vehicle approved successfully!');
+    } catch (error) {
+      console.error('Error approving vehicle:', error);
+      toast.error('Failed to approve vehicle');
+    }
   };
 
-  const handleRejectVehicle = () => {
+  const handleRejectVehicle = async () => {
     // Only admin can reject
     if (currentUserRole !== 'admin') {
-      alert('Only admin users can reject vehicles.');
+      toast.error('Only admin users can reject vehicles.');
       return;
     }
 
     if (!rejectionReason.trim()) {
-      alert('Please enter a rejection reason');
+      toast.error('Please enter a rejection reason');
       return;
     }
 
-    const updatedVehicles = vehicles.map(v => 
-      v.id === selectedVehicle.id 
-        ? { 
-            ...v, 
-            status: 'Rejected',
-            approvalStatus: 'Rejected',
-            rejectionReason: rejectionReason
-          }
-        : v
-    );
+    try {
+      const vehicleRef = ref(db, `vehicles/${selectedVehicle.id}`);
+      await update(vehicleRef, {
+        status: 'Rejected',
+        approvalStatus: 'Rejected',
+        rejectionReason: rejectionReason
+      });
 
-    setVehicles(updatedVehicles);
-    setShowRejectModal(false);
-    setRejectionReason('');
-    
-    // Show success popup
-    showPopupMessage('Vehicle rejected.');
+      setShowRejectModal(false);
+      setRejectionReason('');
+      
+      toast.success('Vehicle rejected.');
+    } catch (error) {
+      console.error('Error rejecting vehicle:', error);
+      toast.error('Failed to reject vehicle');
+    }
   };
 
-  const handleResubmitVehicle = () => {
-    const updatedVehicles = vehicles.map(v => 
-      v.id === selectedVehicle.id 
-        ? { 
-            ...v, 
-            status: 'Pending Approval',
-            approvalStatus: 'Pending',
-            lastEdited: new Date().toISOString().split('T')[0],
-            rejectionReason: ''
-          }
-        : v
-    );
+  const handleResubmitVehicle = async () => {
+    try {
+      const vehicleRef = ref(db, `vehicles/${selectedVehicle.id}`);
+      await update(vehicleRef, {
+        status: 'Pending Approval',
+        approvalStatus: 'Pending',
+        lastEdited: new Date().toISOString().split('T')[0],
+        rejectionReason: ''
+      });
 
-    setVehicles(updatedVehicles);
-    setShowResubmitModal(false);
-    
-    // Show success popup
-    showPopupMessage('Vehicle resubmitted for approval!');
+      setShowResubmitModal(false);
+      
+      toast.success('Vehicle resubmitted for approval!');
+    } catch (error) {
+      console.error('Error resubmitting vehicle:', error);
+      toast.error('Failed to resubmit vehicle');
+    }
   };
 
   const handleAssignTransport = () => {
     alert(`Transport assigned to vehicle ${selectedVehicle.vehicleNumber}`);
     setShowAssignModal(false);
+  };
+
+  const handleStatusChange = async (newStatus) => {
+    try {
+      const vehicleRef = ref(db, `vehicles/${selectedVehicle.id}`);
+      await update(vehicleRef, {
+        status: newStatus,
+        lastStatusChange: new Date().toISOString(),
+        lastEdited: new Date().toISOString().split('T')[0]
+      });
+
+      setShowStatusModal(false);
+      toast.success(`Vehicle status updated to ${newStatus}!`);
+    } catch (error) {
+      console.error('Error updating vehicle status:', error);
+      toast.error('Failed to update vehicle status');
+    }
   };
 
   // UPDATED Vehicle Card Component for Grid View - Simplified
@@ -663,7 +578,7 @@ export function VehiclesList() {
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-500">Status</span>
             <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(vehicle.status)}`}>
-              {vehicle.status === 'Active' ? '✓ Active' : vehicle.status}
+              {vehicle.status === 'Active' || vehicle.status === 'Available' ? '✓ ' + vehicle.status : vehicle.status}
             </span>
           </div>
           <div className="flex items-center justify-between">
@@ -689,6 +604,17 @@ export function VehiclesList() {
             <Eye className="w-4 h-4" />
             View
           </button>
+          
+          {/* Status Change Button - For both owner and admin */}
+          {(currentUserRole === 'owner' || currentUserRole === 'admin') && vehicle.approvalStatus === 'Approved' && (
+            <button
+              onClick={() => handleStatusClick(vehicle)}
+              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center justify-center gap-1"
+            >
+              <Settings className="w-4 h-4" />
+              Status
+            </button>
+          )}
           
           {/* Edit/Resubmit button - Only for owners on Active or Rejected vehicles */}
           {currentUserRole === 'owner' && (vehicle.status === 'Active' || vehicle.status === 'Rejected') && (
@@ -765,7 +691,7 @@ export function VehiclesList() {
       </td>
       <td className="px-6 py-4">
         <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(vehicle.status)}`}>
-          {vehicle.status === 'Active' ? '✓ Active' : vehicle.status}
+          {vehicle.status === 'Active' || vehicle.status === 'Available' ? '✓ ' + vehicle.status : vehicle.status}
         </span>
       </td>
       <td className="px-6 py-4">
@@ -787,6 +713,17 @@ export function VehiclesList() {
           >
             <Eye className="w-4 h-4" />
           </button>
+          
+          {/* Status Change Button - For both owner and admin */}
+          {(currentUserRole === 'owner' || currentUserRole === 'admin') && vehicle.approvalStatus === 'Approved' && (
+            <button
+              onClick={() => handleStatusClick(vehicle)}
+              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              title="Change Status"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
           
           {/* Edit/Resubmit button - Only for owners */}
           {currentUserRole === 'owner' && (vehicle.status === 'Active' || vehicle.status === 'Rejected') && (
@@ -959,6 +896,8 @@ export function VehiclesList() {
                 onChange={(e) => setFilterStatus(e.target.value)}
               >
                 <option value="All">All Status</option>
+                <option value="Available">Available</option>
+                <option value="On Trip">On Trip</option>
                 <option value="Active">Active</option>
                 <option value="Pending Approval">Pending Approval</option>
                 <option value="Edit Request">Edit Request</option>
@@ -1452,7 +1391,7 @@ export function VehiclesList() {
               <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-6">
                 <h4 className="text-lg font-semibold text-gray-900 mb-4">Documents</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {selectedVehicle.documents.map((doc, index) => (
+                  {selectedVehicle.documents?.map((doc, index) => (
                     <div key={index} className="border border-gray-200 rounded-xl p-4 hover:border-blue-300 transition">
                       <div className="flex items-center justify-between mb-2">
                         <FileText className="w-5 h-5 text-gray-400" />
@@ -1485,10 +1424,10 @@ export function VehiclesList() {
                 </div>
               )}
 
-              {selectedVehicle.editRequests.length > 0 && (
+              {selectedVehicle.editRequests?.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6">
                   <h4 className="text-lg font-semibold text-gray-900 mb-4">Edit Requests</h4>
-                  {selectedVehicle.editRequests.map((edit, index) => (
+                  {selectedVehicle.editRequests?.map((edit, index) => (
                     <div key={index} className="bg-white p-4 rounded-lg mb-3">
                       <div className="font-medium text-gray-900 mb-2">
                         {edit.field}: <span className="text-gray-600">{edit.oldValue}</span> → <span className="text-emerald-600">{edit.newValue}</span>
@@ -1659,10 +1598,10 @@ export function VehiclesList() {
                 </div>
               </div>
 
-              {selectedVehicle.status === 'Edit Request' && selectedVehicle.editRequests.length > 0 && (
+              {selectedVehicle.status === 'Edit Request' && selectedVehicle.editRequests?.length > 0 && (
                 <div className="mb-6">
                   <div className="font-medium text-gray-900 mb-2">Changes to be approved:</div>
-                  {selectedVehicle.editRequests.map((edit, index) => (
+                  {selectedVehicle.editRequests?.map((edit, index) => (
                     <div key={index} className="p-3 bg-gray-50 rounded-lg mb-2">
                       <div className="text-sm font-medium text-gray-900">
                         {edit.field}: {edit.oldValue} → {edit.newValue}
@@ -1910,6 +1849,79 @@ export function VehiclesList() {
               >
                 Resubmit for Approval
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Status Change Modal */}
+      {showStatusModal && selectedVehicle && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity bg-black bg-opacity-50" onClick={() => setShowStatusModal(false)} />
+            
+            <div className="inline-block w-full max-w-md my-8 text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-3">
+                  <Settings className="w-6 h-6 text-blue-600" />
+                  Change Vehicle Status
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Update status for {selectedVehicle.vehicleNumber}
+                </p>
+              </div>
+              
+              <div className="p-6">
+                <div className="space-y-3">
+                  <button
+                    onClick={() => handleStatusChange('Available')}
+                    className="w-full p-4 border-2 border-green-200 bg-green-50 hover:bg-green-100 rounded-xl text-left transition"
+                  >
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="w-5 h-5 text-green-600" />
+                      <div>
+                        <div className="font-medium text-green-900">Available</div>
+                        <div className="text-sm text-green-700">Vehicle is ready for trips</div>
+                      </div>
+                    </div>
+                  </button>
+                  
+                  <button
+                    onClick={() => handleStatusChange('On Trip')}
+                    className="w-full p-4 border-2 border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-xl text-left transition"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Truck className="w-5 h-5 text-blue-600" />
+                      <div>
+                        <div className="font-medium text-blue-900">On Trip</div>
+                        <div className="text-sm text-blue-700">Vehicle is currently on a delivery</div>
+                      </div>
+                    </div>
+                  </button>
+                  
+                  <button
+                    onClick={() => handleStatusChange('Maintenance')}
+                    className="w-full p-4 border-2 border-orange-200 bg-orange-50 hover:bg-orange-100 rounded-xl text-left transition"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Wrench className="w-5 h-5 text-orange-600" />
+                      <div>
+                        <div className="font-medium text-orange-900">Maintenance</div>
+                        <div className="text-sm text-orange-700">Vehicle is under maintenance</div>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-end gap-4 p-6 border-t border-gray-100">
+                <button 
+                  onClick={() => setShowStatusModal(false)}
+                  className="px-6 py-2 border-2 border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>

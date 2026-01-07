@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// Firebase Storage Rules for Rice Mill Management System
+// Allows public read access and authenticated write access
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow public read access to all files
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // Specific rule for inventory images
+    match /inventory_images/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    // Profile images
+    match /profile_images/{document=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+  }
+}

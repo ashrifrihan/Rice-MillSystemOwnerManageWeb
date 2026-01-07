@@ -1,0 +1,75 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    
+    "trips": {
+      ".indexOn": ["status", "driverId", "vehicleId", "orderId"],
+      "$tripId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'owner' || root.child('roles').child(auth.uid).child('role').val() === 'admin')",
+        "status": {
+          ".validate": "newData.val() === 'assigned' || newData.val() === 'scheduled' || newData.val() === 'in-transit' || newData.val() === 'delivered' || newData.val() === 'cancelled'"
+        }
+      }
+    },
+
+    "liveLocations": {
+      ".indexOn": ["tripId", "driverId"],
+      "$tripId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'driver' || root.child('roles').child(auth.uid).child('role').val() === 'owner')",
+        "lat": {
+          ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
+        },
+        "lng": {
+          ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
+        }
+      }
+    },
+
+    "orders": {
+      ".indexOn": ["status", "type", "owner_email"],
+      "$orderId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'owner' || root.child('roles').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+
+    "vehicles": {
+      ".indexOn": ["status", "owner_email"],
+      "$vehicleId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'owner' || root.child('roles').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+
+    "workers": {
+      ".indexOn": ["role", "owner_email"],
+      "$workerId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'owner' || root.child('roles').child(auth.uid).child('role').val() === 'admin')",
+        "name": { ".validate": "newData.isString() && newData.val().length > 2" },
+        "nic": { ".validate": "newData.isString() && newData.val().length > 5" },
+        "phone": { ".validate": "newData.isString() && newData.val().length > 6" },
+        "address": { ".validate": "newData.isString() && newData.val().length > 5" },
+        "type": { ".validate": "newData.val() in ['worker','driver','supervisor']" },
+        "status": { ".validate": "newData.val() in ['active','pending','rejected']" },
+        "approved": { ".validate": "newData.isBoolean()" }
+      }
+    },
+
+    "sales": {
+      ".indexOn": ["date", "product", "customer"],
+      "$saleId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('roles').child(auth.uid).child('role').val() === 'owner' || root.child('roles').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+
+    "roles": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('roles').child(auth.uid).child('role').val() === 'admin'"
+    }
+  }
+}

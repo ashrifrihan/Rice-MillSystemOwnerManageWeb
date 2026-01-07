@@ -36,12 +36,24 @@ import {
   MoreVertical,
   ArrowUpDown
 } from 'lucide-react';
+import { ref, get, onValue, update } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 
 export default function Orders() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
+  
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [viewMode, setViewMode] = useState('pending');
   const [searchTerm, setSearchTerm] = useState('');
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [pendingOrders, setPendingOrders] = useState([]);
+  const [approvedOrders, setApprovedOrders] = useState([]);
+  const [rejectedOrders, setRejectedOrders] = useState([]);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [actionOrder, setActionOrder] = useState(null);
   const [actionType, setActionType] = useState('');
@@ -51,218 +63,123 @@ export default function Orders() {
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [filterStatus, setFilterStatus] = useState('All');
 
-  // Mock dealer-placed orders (awaiting approval)
-  const [pendingOrders, setPendingOrders] = useState([
-    {
-      id: 'ORD-2025-0481',
-      dealerName: 'Sharma Foods Ltd',
-      dealerId: 'DLR-102',
-      dealerContact: '+91 98765 43210',
-      dealerEmail: 'sharma@foods.com',
-      dealerAddress: '123 Market Road, Mumbai - 400001',
-      placedBy: 'Rajesh Sharma',
-      placedOn: '2025-03-14T10:30:00',
-      items: [
-        { name: 'Nadu Rice', quantity: 50, unit: 'bags', price: 3800, subtotal: 190000 },
-        { name: 'Samba Rice', quantity: 30, unit: 'bags', price: 3200, subtotal: 96000 }
-      ],
-      totalAmount: 286000,
-      deliveryAddress: '123 Market Road, Mumbai - 400001',
-      deliveryDate: '2025-03-16',
-      notes: 'Urgent delivery requested for restaurant opening',
-      paymentTerms: '50% advance, 50% on delivery',
-      creditLimit: 500000,
-      creditUsed: 285000,
-      creditAvailable: 215000,
-      previousOrders: 12,
-      avgOrderValue: 235000,
-      loyaltyTier: 'Platinum',
-      status: 'pending',
-      priority: 'high'
-    },
-    {
-      id: 'ORD-2025-0482',
-      dealerName: 'Patel Grocery Chain',
-      dealerId: 'DLR-108',
-      dealerContact: '+91 98765 43211',
-      dealerEmail: 'patel@groceries.com',
-      dealerAddress: 'Gandhi Nagar, Ahmedabad - 380001',
-      placedBy: 'Anil Patel',
-      placedOn: '2025-03-14T14:15:00',
-      items: [
-        { name: 'Basmati Premium', quantity: 40, unit: 'bags', price: 8500, subtotal: 340000 },
-        { name: 'Brown Rice', quantity: 20, unit: 'bags', price: 3600, subtotal: 72000 }
-      ],
-      totalAmount: 412000,
-      deliveryAddress: 'Gandhi Nagar, Ahmedabad - 380001',
-      deliveryDate: '2025-03-18',
-      notes: 'Payment on delivery, requires quality certificate',
-      paymentTerms: '100% on delivery',
-      creditLimit: 300000,
-      creditUsed: 45000,
-      creditAvailable: 255000,
-      previousOrders: 8,
-      avgOrderValue: 185000,
-      loyaltyTier: 'Gold',
-      status: 'pending',
-      priority: 'normal'
-    },
-    {
-      id: 'ORD-2025-0483',
-      dealerName: 'Singh Exports',
-      dealerId: 'DLR-095',
-      dealerContact: '+91 98765 43212',
-      dealerEmail: 'singh@exports.com',
-      dealerAddress: 'Industrial Area, Delhi - 110001',
-      placedBy: 'Gurpreet Singh',
-      placedOn: '2025-03-13T09:45:00',
-      items: [
-        { name: 'Jasmine Rice', quantity: 60, unit: 'bags', price: 6300, subtotal: 378000 }
-      ],
-      totalAmount: 378000,
-      deliveryAddress: 'Port Warehouse, Mumbai - 400001',
-      deliveryDate: '2025-03-20',
-      notes: 'Export quality required, needs phytosanitary certificate',
-      paymentTerms: '30 days credit',
-      creditLimit: 1000000,
-      creditUsed: 250000,
-      creditAvailable: 750000,
-      previousOrders: 25,
-      avgOrderValue: 420000,
-      loyaltyTier: 'Platinum',
-      status: 'pending',
-      priority: 'medium'
-    }
-  ]);
+  // Safe helpers
+  const safeLocaleString = (value) => Number(value ?? 0).toLocaleString('en-IN');
+  const safeArray = (arr) => (Array.isArray(arr) ? arr : []);
+  const safeText = (val, fallback = '-') => (val == null || val === '' ? fallback : String(val));
+  const safeInitial = (val) => (safeText(val, '?').charAt(0) || '?');
+  const formatDateSafe = (dateString) => {
+    if (!dateString) return '-';
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return '-';
+    return d.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
 
-  const [approvedOrders, setApprovedOrders] = useState([
-    {
-      id: 'ORD-2025-0479',
-      dealerName: 'Gupta Wholesalers',
-      dealerId: 'DLR-087',
-      placedBy: 'Sanjay Gupta',
-      placedOn: '2025-03-13T11:20:00',
-      approvedBy: 'Rice Mill Owner',
-      approvedOn: '2025-03-13T16:20:00',
-      items: [
-        { name: 'Raw Paddy', quantity: 100, unit: 'quintals', price: 3200, subtotal: 320000 }
-      ],
-      totalAmount: 320000,
-      status: 'approved',
-      productionStatus: 'processing',
-      expectedDelivery: '2025-03-18',
-      paymentStatus: 'pending'
-    },
-    {
-      id: 'ORD-2025-0478',
-      dealerName: 'Kumar Restaurants',
-      dealerId: 'DLR-091',
-      placedBy: 'Vikram Kumar',
-      placedOn: '2025-03-12T15:45:00',
-      approvedBy: 'Rice Mill Owner',
-      approvedOn: '2025-03-12T17:30:00',
-      items: [
-        { name: 'Premium Basmati', quantity: 25, unit: 'bags', price: 9500, subtotal: 237500 }
-      ],
-      totalAmount: 237500,
-      status: 'approved',
-      productionStatus: 'completed',
-      expectedDelivery: '2025-03-15',
-      paymentStatus: 'paid'
-    },
-    {
-      id: 'ORD-2025-0477',
-      dealerName: 'Sharma Foods Ltd',
-      dealerId: 'DLR-102',
-      placedBy: 'Rajesh Sharma',
-      placedOn: '2025-03-11T10:15:00',
-      approvedBy: 'Rice Mill Owner',
-      approvedOn: '2025-03-11T14:45:00',
-      items: [
-        { name: 'Brown Rice', quantity: 35, unit: 'bags', price: 3600, subtotal: 126000 },
-        { name: 'Nadu Rice', quantity: 45, unit: 'bags', price: 3800, subtotal: 171000 }
-      ],
-      totalAmount: 297000,
-      status: 'approved',
-      productionStatus: 'packaging',
-      expectedDelivery: '2025-03-14',
-      paymentStatus: 'partial'
-    }
-  ]);
-
-  const [rejectedOrders, setRejectedOrders] = useState([
-    {
-      id: 'ORD-2025-0476',
-      dealerName: 'Patel Grocery Chain',
-      dealerId: 'DLR-108',
-      placedBy: 'Anil Patel',
-      placedOn: '2025-03-10T16:30:00',
-      rejectedBy: 'Rice Mill Owner',
-      rejectedOn: '2025-03-11T10:15:00',
-      items: [
-        { name: 'Premium Basmati', quantity: 25, unit: 'bags', price: 9500, subtotal: 237500 }
-      ],
-      totalAmount: 237500,
-      status: 'rejected',
-      reason: 'Credit limit exceeded',
-      notes: 'Customer needs to clear outstanding payment'
-    },
-    {
-      id: 'ORD-2025-0475',
-      dealerName: 'Singh Exports',
-      dealerId: 'DLR-095',
-      placedBy: 'Gurpreet Singh',
-      placedOn: '2025-03-09T14:20:00',
-      rejectedBy: 'Rice Mill Owner',
-      rejectedOn: '2025-03-09T16:45:00',
-      items: [
-        { name: 'Jasmine Rice', quantity: 75, unit: 'bags', price: 6300, subtotal: 472500 }
-      ],
-      totalAmount: 472500,
-      status: 'rejected',
-      reason: 'Insufficient stock',
-      notes: 'Will be available next week'
-    }
-  ]);
+ 
 
   useEffect(() => {
-    // In a real app, you would fetch orders from API here
-  }, []);
+    console.log("👤 Current user email:", userEmail);
+    console.log("👤 User object:", user);
+
+    if (!userEmail) {
+      console.error("❌ No user email found!");
+      return;
+    }
+
+    const ordersRef = ref(db, 'orders');
+
+    // Also get ALL orders once for debugging
+    get(ordersRef).then((snapshot) => {
+      const allOrders = [];
+      snapshot.forEach((child) => {
+        allOrders.push(child.val());
+      });
+
+      console.log("📋 ALL ORDERS IN DATABASE:");
+      allOrders.forEach((order, index) => {
+        console.log(`Order ${index + 1}:`, {
+          id: order.id,
+          ownerEmail: order.ownerEmail,
+          riceMillOwner: order.riceMillOwner,
+          dealerName: order.dealerName,
+          totalAmount: order.totalAmount,
+          status: order.status
+        });
+      });
+    });
+
+    // Set up realtime listener for orders
+    const unsubscribe = onValue(ordersRef, (snapshot) => {
+      // Filter orders by owner
+      const list = filterSnapshotByOwner(snapshot, userEmail);
+
+      const pending = list.filter(o => (o.status || '').toLowerCase() === 'pending');
+      const approved = list.filter(o => (o.status || '').toLowerCase() === 'approved');
+      const rejected = list.filter(o => (o.status || '').toLowerCase() === 'rejected');
+
+      setPendingOrders(pending.sort((a,b)=> (b.placedOn || '') > (a.placedOn || '') ? 1 : -1));
+      setApprovedOrders(approved.sort((a,b)=> (b.approvedOn || '') > (a.approvedOn || '') ? 1 : -1));
+      setRejectedOrders(rejected.sort((a,b)=> (b.rejectedOn || '') > (a.rejectedOn || '') ? 1 : -1));
+    }, (err) => {
+      console.error('orders onValue error', err);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [userEmail]);
 
   const handleApproveOrder = (orderId) => {
-    const orderToApprove = pendingOrders.find(order => order.id === orderId);
-    if (orderToApprove) {
-      const approvedOrder = {
-        ...orderToApprove,
-        status: 'approved',
-        approvedBy: 'Rice Mill Owner',
-        approvedOn: new Date().toISOString(),
-        productionStatus: 'pending',
-        paymentStatus: 'pending'
-      };
-      
-      setPendingOrders(prev => prev.filter(order => order.id !== orderId));
-      setApprovedOrders(prev => [approvedOrder, ...prev]);
-      setIsDetailModalOpen(false);
-    }
+    const orderToApprove = pendingOrders.find(o => o.id === orderId);
+    if (!orderToApprove) return;
+
+    const updates = {
+      status: 'approved',
+      type: orderToApprove.type || 'delivery',
+      approvedBy: 'Rice Mill Owner',
+      approvedOn: new Date().toISOString(),
+      productionStatus: 'pending',
+      paymentStatus: 'pending'
+    };
+
+    update(ref(db, `orders/${orderId}`), updates)
+      .then(() => {
+        // IMPORTANT: send FULL order to AssignTransport
+        navigate('/assign', {
+          state: {
+            orderId,
+            order: { ...orderToApprove, ...updates }
+          }
+        });
+      })
+      .catch(console.error);
   };
 
   const handleRejectOrder = (orderId, reason) => {
     const orderToReject = pendingOrders.find(order => order.id === orderId);
-    if (orderToReject) {
-      const rejectedOrder = {
-        ...orderToReject,
-        status: 'rejected',
-        rejectedBy: 'Rice Mill Owner',
-        rejectedOn: new Date().toISOString(),
-        reason: reason
-      };
-      
-      setPendingOrders(prev => prev.filter(order => order.id !== orderId));
-      setRejectedOrders(prev => [rejectedOrder, ...prev]);
-      setIsConfirmModalOpen(false);
-      setRejectReason('');
-    }
+    if (!orderToReject) return;
+
+    const updates = {
+      status: 'rejected',
+      rejectedBy: 'Rice Mill Owner',
+      rejectedOn: new Date().toISOString(),
+      reason: reason
+    };
+
+    update(ref(db, `orders/${orderId}`), updates)
+      .then(() => {
+        setIsConfirmModalOpen(false);
+        setRejectReason('');
+      })
+      .catch((err) => {
+        console.error('Failed to reject order', err);
+      });
   };
 
   const openConfirmModal = (order, type) => {
@@ -271,16 +188,8 @@ export default function Orders() {
     setIsConfirmModalOpen(true);
   };
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  // Deprecated in favor of formatDateSafe but kept if referenced elsewhere
+  const formatDate = formatDateSafe;
 
   const getPriorityBadge = (priority) => {
     const config = {
@@ -312,7 +221,8 @@ export default function Orders() {
     );
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (statusRaw) => {
+    const status = (statusRaw || 'pending').toString().toLowerCase();
     const config = {
       approved: { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200', icon: CheckCircle },
       pending: { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', icon: Clock },
@@ -343,9 +253,9 @@ export default function Orders() {
     }
 
     let filtered = orders.filter(order => 
-      order.dealerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.placedBy.toLowerCase().includes(searchTerm.toLowerCase())
+      (order.dealerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (order.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (order.placedBy || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     // Apply additional status filter for table views
@@ -400,6 +310,25 @@ export default function Orders() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
+      {/* Debug Button */}
+      <div className="p-4">
+        <button 
+          onClick={() => {
+            get(ref(db, 'orders')).then((snapshot) => {
+              console.log("All orders in database:", snapshot.val());
+              const allOrders = [];
+              snapshot.forEach((child) => {
+                allOrders.push(child.val());
+              });
+              alert(`Found ${allOrders.length} orders in database. Check console for details.`);
+            });
+          }}
+          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+        >
+          Debug: Show All Orders
+        </button>
+      </div>
+
       {/* Enhanced Header */}
       
 
@@ -503,7 +432,8 @@ export default function Orders() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-4xl font-bold text-gray-900">₹{order.totalAmount.toLocaleString()}</p>
+                        <p className="text-4xl font-bold text-gray-900">Rs.{Number(order.totalAmount || 0).toLocaleString()}
+</p>
                         <p className="text-gray-600">Placed on {formatDate(order.placedOn)}</p>
                       </div>
                     </div>
@@ -542,27 +472,37 @@ export default function Orders() {
                           <div className="space-y-3">
                             <div className="flex justify-between">
                               <span className="text-gray-600">Credit Limit</span>
-                              <span className="font-bold">₹{order.creditLimit.toLocaleString()}</span>
+                              <span className="font-bold">Rs.{Number(order.creditLimit || 0).toLocaleString()}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Credit Used</span>
-                              <span className="font-bold text-amber-600">₹{order.creditUsed.toLocaleString()}</span>
+                              <span className="font-bold text-amber-600">Rs.{safeLocaleString(order.creditUsed)}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Available Credit</span>
-                              <span className={`font-bold ${order.creditAvailable > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                ₹{order.creditAvailable.toLocaleString()}
+                              <span className={`font-bold ${(Number(order.creditAvailable ?? 0) > 0) ? 'text-green-600' : 'text-red-600'}`}>
+                                Rs.{safeLocaleString(order.creditAvailable)}
                               </span>
                             </div>
                             <div className="mt-4">
                               <div className="flex justify-between text-xs text-gray-600 mb-1">
                                 <span>Credit Usage</span>
-                                <span>{((order.creditUsed / order.creditLimit) * 100).toFixed(1)}%</span>
+                                <span>{(() => {
+                                  const used = Number(order.creditUsed ?? 0);
+                                  const limit = Number(order.creditLimit ?? 0);
+                                  const pct = limit > 0 ? (used / limit) * 100 : 0;
+                                  return pct.toFixed(1);
+                                })()}%</span>
                               </div>
                               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                                 <div 
-                                  className={`h-full ${order.creditAvailable > 0 ? 'bg-green-500' : 'bg-red-500'}`}
-                                  style={{ width: `${Math.min((order.creditUsed / order.creditLimit) * 100, 100)}%` }}
+                                  className={`h-full ${(Number(order.creditAvailable ?? 0) > 0) ? 'bg-green-500' : 'bg-red-500'}`}
+                                  style={{ width: (() => {
+                                    const used = Number(order.creditUsed ?? 0);
+                                    const limit = Number(order.creditLimit ?? 0);
+                                    const pct = limit > 0 ? (used / limit) * 100 : 0;
+                                    return `${Math.min(pct, 100)}%`;
+                                  })() }}
                                 ></div>
                               </div>
                             </div>
@@ -575,22 +515,23 @@ export default function Orders() {
                         <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5">
                           <h4 className="text-lg font-bold text-gray-900 mb-4">Order Items</h4>
                           <div className="space-y-3">
-                            {order.items.map((item, index) => (
+                            {safeArray(order.items).map((item, index) => (
                               <div key={index} className="flex justify-between items-center p-3 bg-white/80 rounded-xl">
                                 <div>
-                                  <p className="font-bold text-gray-900">{item.name}</p>
-                                  <p className="text-sm text-gray-600">{item.quantity} {item.unit}</p>
+                                  <p className="font-bold text-gray-900">{safeText(item.name)}</p>
+                                  <p className="text-sm text-gray-600">{safeText(item.quantity ?? 0)} {safeText(item.unit ?? '')}</p>
                                 </div>
                                 <div className="text-right">
-                                  <p className="font-bold text-gray-900">₹{item.subtotal.toLocaleString()}</p>
-                                  <p className="text-sm text-gray-600">₹{item.price}/{item.unit}</p>
+                                  <p className="font-bold text-gray-900">Rs.{safeLocaleString(item.subtotal)}</p>
+                                  <p className="text-sm text-gray-600">Rs.{safeLocaleString(item.price)}/{safeText(item.unit ?? '')}</p>
                                 </div>
                               </div>
                             ))}
                             <div className="pt-3 border-t border-amber-200">
                               <div className="flex justify-between font-bold text-lg">
                                 <span>Total Amount</span>
-                                <span>₹{order.totalAmount.toLocaleString()}</span>
+                                <span>Rs.{Number(order.totalAmount || 0).toLocaleString()}
+</span>
                               </div>
                             </div>
                           </div>
@@ -609,11 +550,13 @@ export default function Orders() {
                             <div>
                               <p className="text-sm text-gray-600">Delivery Date</p>
                               <p className="font-medium text-gray-900">
-                                {new Date(order.deliveryDate).toLocaleDateString('en-IN', {
-                                  day: '2-digit',
-                                  month: 'long',
-                                  year: 'numeric'
-                                })}
+                                {order.deliveryDate
+                                  ? new Date(order.deliveryDate).toLocaleDateString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'long',
+                                      year: 'numeric'
+                                    })
+                                  : '-'}
                               </p>
                             </div>
                             <div>
@@ -660,7 +603,7 @@ export default function Orders() {
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Avg Order Value</span>
-                              <span className="font-bold">₹{order.avgOrderValue.toLocaleString()}</span>
+                              <span className="font-bold">Rs.{safeLocaleString(order.avgOrderValue)}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Loyalty Tier</span>
@@ -774,24 +717,25 @@ export default function Orders() {
                         <td className="px-6 py-4">
                           <div>
                             <div className="text-sm font-medium text-gray-900">{order.dealerName}</div>
-                            <div className="text-xs text-gray-500">{order.items.length} item{order.items.length > 1 ? 's' : ''}</div>
+                            <div className="text-xs text-gray-500">{safeArray(order.items).length} item{safeArray(order.items).length > 1 ? 's' : ''}</div>
                           </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center">
                             <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-medium text-sm">
-                              {order.placedBy.charAt(0)}
+                              {safeInitial(order.placedBy)}
                             </div>
                             <div className="ml-3">
-                              <div className="text-sm font-medium text-gray-900">{order.placedBy}</div>
+                              <div className="text-sm font-medium text-gray-900">{safeText(order.placedBy)}</div>
                               <div className="text-xs text-gray-500">{formatDate(order.placedOn)}</div>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="text-lg font-bold text-gray-900">₹{order.totalAmount.toLocaleString()}</div>
+                          <div className="text-lg font-bold text-gray-900">Rs.{Number(order.totalAmount || 0).toLocaleString()}
+</div>
                           <div className="text-xs text-gray-500">
-                            {order.items.reduce((sum, item) => sum + item.quantity, 0)} units
+                            {safeArray(order.items).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)} units
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -971,7 +915,7 @@ export default function Orders() {
                   }
                 </p>
                 <p className="font-bold text-gray-900">{actionOrder.dealerName}</p>
-                <p className="text-lg font-bold text-gray-900 mt-2">₹{actionOrder.totalAmount.toLocaleString()}</p>
+                <p className="text-lg font-bold text-gray-900 mt-2">Rs. {actionOrder.totalAmount.toLocaleString()}</p>
               </div>
 
               {actionType === 'reject' && (
@@ -1072,22 +1016,22 @@ export default function Orders() {
                   <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-6">
                     <h3 className="text-xl font-bold text-gray-900 mb-4">Order Items</h3>
                     <div className="space-y-3">
-                      {selectedOrder.items.map((item, index) => (
+                      {safeArray(selectedOrder.items).map((item, index) => (
                         <div key={index} className="flex justify-between items-center p-3 bg-white/80 rounded-xl">
                           <div>
-                            <p className="font-bold text-gray-900">{item.name}</p>
-                            <p className="text-sm text-gray-600">{item.quantity} {item.unit}</p>
+                            <p className="font-bold text-gray-900">{safeText(item.name)}</p>
+                            <p className="text-sm text-gray-600">{safeText(item.quantity ?? 0)} {safeText(item.unit ?? '')}</p>
                           </div>
                           <div className="text-right">
-                            <p className="font-bold text-gray-900">₹{item.subtotal.toLocaleString()}</p>
-                            <p className="text-sm text-gray-600">₹{item.price}/{item.unit}</p>
+                            <p className="font-bold text-gray-900">Rs.{safeLocaleString(item.subtotal)}</p>
+                            <p className="text-sm text-gray-600">Rs.{safeLocaleString(item.price)}/{safeText(item.unit ?? '')}</p>
                           </div>
                         </div>
                       ))}
                       <div className="pt-3 border-t border-amber-200">
                         <div className="flex justify-between font-bold text-lg">
                           <span>Total Amount</span>
-                          <span>₹{selectedOrder.totalAmount.toLocaleString()}</span>
+                          <span>Rs.{safeLocaleString(selectedOrder.totalAmount)}</span>
                         </div>
                       </div>
                     </div>

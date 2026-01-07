@@ -26,64 +26,22 @@ import {
   AlertCircle,
   Timer,
   Calculator,
-  Truck as TruckIcon,
-  Package as PackageIcon,
-  Factory as FactoryIcon,
-  Clock as ClockIcon,
   X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { ref, onValue, push, set, remove } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
+import PopupAlert from '../components/ui/PopupAlert';
 
-// Mock data for work logs
-const mockWorkerData = {
-  allWorkers: [
-    {
-      id: 'W001',
-      name: 'Rajesh Perera',
-      role: 'Driver',
-      type: 'driver',
-      approved: true,
-      photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=rajesh',
-      attendance: { present: true }
-    },
-    {
-      id: 'W002',
-      name: 'Kamal Silva',
-      role: 'General Worker',
-      type: 'worker',
-      approved: true,
-      photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=kamal',
-      attendance: { present: true }
-    },
-    {
-      id: 'W003',
-      name: 'Sunil Bandara',
-      role: 'Supervisor',
-      type: 'supervisor',
-      approved: true,
-      photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sunil',
-      attendance: { present: true }
-    },
-    {
-      id: 'W004',
-      name: 'Nimal Fernando',
-      role: 'Driver',
-      type: 'driver',
-      approved: true,
-      photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nimal',
-      attendance: { present: false }
-    },
-    {
-      id: 'W005',
-      name: 'Anil Rathnayake',
-      role: 'General Worker',
-      type: 'worker',
-      approved: true,
-      photo: 'https://api.dicebear.com/7.x/avataaars/svg?seed=anil',
-      attendance: { present: true }
-    }
-  ]
-};
+// Local aliases for icons used both as-is and as role-specific icons
+const TruckIcon = Truck;
+const PackageIcon = Package;
+const FactoryIcon = Factory;
+const ClockIcon = Clock;
+
+// Workers and work logs are loaded from Firebase Realtime Database
 
 // KPI Card Component
 const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, unit = "" }) => (
@@ -237,7 +195,12 @@ const AddWorkLogModal = ({ isOpen, onClose, onSubmit, workers, selectedDate }) =
 
   if (!isOpen) return null;
 
-  const approvedPresentWorkers = workers.filter(w => w.approved && w.attendance?.present);
+  // Include workers with 'active' status as approved; default missing attendance to present
+  const approvedPresentWorkers = workers.filter(w => {
+    const isApproved = w.approved || w.status === 'active';
+    const presentFlag = w.attendance?.present;
+    return isApproved && (presentFlag === undefined ? true : presentFlag);
+  });
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -831,54 +794,56 @@ const RoleBasedSummary = ({ logs }) => {
 
 // Main Component
 export function WorkLogs() {
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState('all');
   const [workLogs, setWorkLogs] = useState([]);
+  const [allLogs, setAllLogs] = useState([]);
+  const [workers, setWorkers] = useState([]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [popupAlert, setPopupAlert] = useState({ isOpen: false, type: 'success', title: '', message: '', details: [] });
 
+  // Load workers and work logs from Firebase Realtime Database
   useEffect(() => {
-    // Generate mock work logs
-    const logs = mockWorkerData.allWorkers
-      .filter(worker => worker.approved && worker.attendance?.present)
-      .map(worker => {
-        const isDriver = worker.type === 'driver';
-        const workCategories = isDriver 
-          ? ['Delivery', 'Raw Material Pickup', 'Vehicle Maintenance']
-          : ['Paddy Unloading', 'Rice Packing', 'Cleaning', 'Machine Operation'];
-        
-        return {
-          id: `LOG-${Math.random().toString(36).substr(2, 9)}`,
-          workerId: worker.id,
-          workerName: worker.name,
-          workerRole: worker.role,
-          workerType: worker.type,
-          photo: worker.photo,
-          date: selectedDate,
-          startTime: '08:00',
-          endTime: '17:00',
-          totalHours: 8.0,
-          workCategory: workCategories[Math.floor(Math.random() * workCategories.length)],
-          description: 'Daily work activities completed',
-          quantity: isDriver ? null : Math.floor(Math.random() * 100) + 20,
-          remarks: Math.random() > 0.7 ? 'Special task completed' : '',
-          status: ['Completed', 'Partial'][Math.floor(Math.random() * 2)],
-          recordedAt: new Date().toISOString(),
-          recordedBy: 'Admin',
-          // Driver specific
-          vehicleNumber: isDriver ? `KA-01-AB-${Math.floor(Math.random() * 9000) + 1000}` : null,
-          tripReference: isDriver ? `TRIP-${Math.floor(Math.random() * 1000)}` : null,
-          distanceCovered: isDriver ? Math.floor(Math.random() * 200) + 50 : null,
-          tripsCompleted: isDriver ? Math.floor(Math.random() * 5) + 1 : null
-        };
-      });
+    if (!userEmail) return;
+    
+    const workersRef = ref(db, 'workers');
+    const logsRef = ref(db, 'workLogs');
 
-    setWorkLogs(logs);
-  }, [selectedDate]);
+    const unsubscribeWorkers = onValue(workersRef, (snapshot) => {
+      const scoped = filterSnapshotByOwner(snapshot, userEmail);
+      if (scoped && scoped.length > 0) {
+        setWorkers(scoped);
+      } else if (snapshot.exists()) {
+        const data = snapshot.val();
+        const list = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+        setWorkers(list);
+      } else {
+        setWorkers([]);
+      }
+    });
+
+    const unsubscribeLogs = onValue(logsRef, (snapshot) => {
+      const list = filterSnapshotByOwner(snapshot, userEmail);
+      setAllLogs(list);
+    });
+
+    return () => {
+      unsubscribeWorkers();
+      unsubscribeLogs();
+    };
+  }, [userEmail]);
+
+  // Filter logs for the selected date
+  useEffect(() => {
+    setWorkLogs(allLogs.filter(l => l.date === selectedDate));
+  }, [allLogs, selectedDate]);
 
   const filteredLogs = workLogs.filter(log => {
     const matchesSearch = searchTerm === '' || 
@@ -900,14 +865,50 @@ export function WorkLogs() {
     }
   };
 
-  const handleAddLog = (logData) => {
-    setWorkLogs(prev => [logData, ...prev]);
-    toast.success('Work log added successfully');
+  const handleAddLog = async (logData) => {
+    try {
+      const newRef = push(ref(db, 'workLogs'));
+      const dataToSave = { ...logData, id: newRef.key };
+      await set(newRef, dataToSave);
+      setPopupAlert({
+        isOpen: true,
+        type: 'success',
+        title: 'Work Log Added',
+        message: `${logData.workerName} log saved for ${logData.date}.`,
+        details: []
+      });
+    } catch (err) {
+      console.error(err);
+      setPopupAlert({
+        isOpen: true,
+        type: 'error',
+        title: 'Add Failed',
+        message: 'Could not save the work log.',
+        details: [err.message || 'Unknown error']
+      });
+    }
   };
 
-  const handleDeleteLog = (logId) => {
-    setWorkLogs(prev => prev.filter(log => log.id !== logId));
-    toast.success('Work log deleted');
+  const handleDeleteLog = async (logId) => {
+    try {
+      await remove(ref(db, `workLogs/${logId}`));
+      setPopupAlert({
+        isOpen: true,
+        type: 'success',
+        title: 'Work Log Deleted',
+        message: 'The log was removed successfully.',
+        details: []
+      });
+    } catch (err) {
+      console.error(err);
+      setPopupAlert({
+        isOpen: true,
+        type: 'error',
+        title: 'Delete Failed',
+        message: 'Could not delete the work log.',
+        details: [err.message || 'Unknown error']
+      });
+    }
   };
 
   const handleViewDetails = (log) => {
@@ -929,7 +930,13 @@ export function WorkLogs() {
   };
 
   const handleEditLog = (logId) => {
-    toast.success('Edit functionality - Admin only');
+    setPopupAlert({
+      isOpen: true,
+      type: 'success',
+      title: 'Edit Mode',
+      message: 'Edit functionality is admin-only.',
+      details: []
+    });
   };
 
   return (
@@ -1266,7 +1273,7 @@ export function WorkLogs() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={handleAddLog}
-        workers={mockWorkerData.allWorkers.filter(w => w.approved && w.attendance?.present)}
+        workers={workers}
         selectedDate={selectedDate}
       />
       
@@ -1277,6 +1284,15 @@ export function WorkLogs() {
           setSelectedLog(null);
         }}
         log={selectedLog}
+      />
+
+      <PopupAlert
+        isOpen={popupAlert.isOpen}
+        type={popupAlert.type}
+        title={popupAlert.title}
+        message={popupAlert.message}
+        details={popupAlert.details}
+        onClose={() => setPopupAlert(prev => ({ ...prev, isOpen: false }))}
       />
     </div>
   );

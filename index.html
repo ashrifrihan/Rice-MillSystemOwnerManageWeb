@@ -8,6 +8,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Hidden targets to satisfy external share-modal scripts and prevent null errors -->
+    <div id="share-modal" style="display:none"></div>
+    <button id="share-modal-open" style="display:none" aria-hidden="true"></button>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

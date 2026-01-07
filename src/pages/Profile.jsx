@@ -1,4 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue, update, get } from 'firebase/database';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useAuth } from '../contexts/AuthContext';
+import toast from 'react-hot-toast';
 import { 
   UserCircleIcon, 
   MailIcon, 
@@ -18,28 +23,90 @@ import {
 } from 'lucide-react';
 
 export function Profile() {
+  const { user, userProfile } = useAuth();
+  const [loading, setLoading] = useState(true);
+  
   // State for profile data
   const [profileData, setProfileData] = useState({
     personal: {
-      fullName: 'Rahul Singh',
-      email: 'rahul@ricemill.com',
-      phone: '+91 9876543210',
-      dob: '15 August 1980'
+      fullName: '',
+      email: '',
+      phone: '',
+      dob: ''
     },
     business: {
-      businessName: 'Singh Rice Mills Pvt. Ltd.',
-      gstNumber: '27AABCS1429B1ZB',
-      businessAddress: '123 Rice Mill Road, Nagpur, Maharashtra 440001',
-      established: '2005',
-      businessType: 'Private Limited'
+      businessName: '',
+      gstNumber: '',
+      businessAddress: '',
+      established: '',
+      businessType: ''
     },
     additional: {
-      primaryBusiness: 'Rice Milling & Distribution',
-      annualTurnover: '₹5.2 Crores',
-      employees: '45',
-      certifications: 'ISO 9001, FSSAI'
+      primaryBusiness: '',
+      annualTurnover: '',
+      employees: '',
+      certifications: ''
     }
   });
+  
+  const [stats, setStats] = useState({
+    memberSince: '',
+    totalOrders: 0,
+    activePlan: 'Free'
+  });
+  
+  // Load profile data from Firebase
+  useEffect(() => {
+    if (!user?.uid) return;
+    
+    setLoading(true);
+    const userRef = ref(db, `users/${user.uid}`);
+    
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        
+        setProfileData({
+          personal: {
+            fullName: data?.name || data?.fullName || '',
+            email: data?.email || user?.email || '',
+            phone: data?.phone || data?.contact || '',
+            dob: data?.dob || data?.dateOfBirth || ''
+          },
+          business: {
+            businessName: data?.businessName || data?.millName || '',
+            gstNumber: data?.gstNumber || '',
+            businessAddress: data?.businessAddress || data?.address || '',
+            established: data?.established || data?.establishedYear || '',
+            businessType: data?.businessType || 'Private Limited'
+          },
+          additional: {
+            primaryBusiness: data?.primaryBusiness || 'Rice Milling & Distribution',
+            annualTurnover: data?.annualTurnover || '',
+            employees: data?.employees || data?.employeeCount || '',
+            certifications: data?.certifications || ''
+          }
+        });
+        
+        setStats({
+          memberSince: data?.createdAt ? new Date(data.createdAt).getFullYear() : new Date().getFullYear(),
+          totalOrders: data?.totalOrders || 0,
+          activePlan: data?.plan || 'Premium'
+        });
+        
+        if (data?.profileImage) {
+          setProfileImage(data.profileImage);
+        }
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error('Firebase error:', error);
+      toast.error('Failed to load profile data');
+      setLoading(false);
+    });
+    
+    return () => unsubscribe();
+  }, [user]);
 
   // State for edit modals
   const [editPersonal, setEditPersonal] = useState(false);
@@ -48,10 +115,17 @@ export function Profile() {
   const [editProfileImage, setEditProfileImage] = useState(false);
 
   // State for form data
-  const [personalForm, setPersonalForm] = useState(profileData.personal);
-  const [businessForm, setBusinessForm] = useState(profileData.business);
-  const [additionalForm, setAdditionalForm] = useState(profileData.additional);
+  const [personalForm, setPersonalForm] = useState({});
+  const [businessForm, setBusinessForm] = useState({});
+  const [additionalForm, setAdditionalForm] = useState({});
   const [profileImage, setProfileImage] = useState(null);
+
+  // Sync form states with profileData when it updates from Firebase
+  useEffect(() => {
+    setPersonalForm(profileData.personal);
+    setBusinessForm(profileData.business);
+    setAdditionalForm(profileData.additional);
+  }, [profileData]);
 
   // Handle personal info form changes
   const handlePersonalChange = (e) => {
@@ -72,29 +146,161 @@ export function Profile() {
   };
 
   // Save personal info
-  const savePersonalInfo = () => {
-    setProfileData(prev => ({ ...prev, personal: personalForm }));
-    setEditPersonal(false);
+  const savePersonalInfo = async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const userRef = ref(db, `users/${user.uid}`);
+      await update(userRef, {
+        name: personalForm.fullName,
+        fullName: personalForm.fullName,
+        email: personalForm.email,
+        phone: personalForm.phone,
+        contact: personalForm.phone,
+        dob: personalForm.dob,
+        dateOfBirth: personalForm.dob,
+        updatedAt: new Date().toISOString()
+      });
+      
+      setProfileData(prev => ({ ...prev, personal: personalForm }));
+      setEditPersonal(false);
+      toast.success('Personal information updated successfully!');
+    } catch (error) {
+      console.error('Error updating personal info:', error);
+      toast.error('Failed to update personal information');
+    }
   };
 
   // Save business info
-  const saveBusinessInfo = () => {
-    setProfileData(prev => ({ ...prev, business: businessForm }));
-    setEditBusiness(false);
+  const saveBusinessInfo = async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const userRef = ref(db, `users/${user.uid}`);
+      await update(userRef, {
+        businessName: businessForm.businessName,
+        millName: businessForm.businessName,
+        gstNumber: businessForm.gstNumber,
+        businessAddress: businessForm.businessAddress,
+        address: businessForm.businessAddress,
+        established: businessForm.established,
+        establishedYear: businessForm.established,
+        businessType: businessForm.businessType,
+        updatedAt: new Date().toISOString()
+      });
+      
+      setProfileData(prev => ({ ...prev, business: businessForm }));
+      setEditBusiness(false);
+      toast.success('Business information updated successfully!');
+    } catch (error) {
+      console.error('Error updating business info:', error);
+      toast.error('Failed to update business information');
+    }
   };
 
   // Save additional info
-  const saveAdditionalInfo = () => {
-    setProfileData(prev => ({ ...prev, additional: additionalForm }));
-    setEditAdditional(false);
+  const saveAdditionalInfo = async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const userRef = ref(db, `users/${user.uid}`);
+      await update(userRef, {
+        primaryBusiness: additionalForm.primaryBusiness,
+        annualTurnover: additionalForm.annualTurnover,
+        employees: additionalForm.employees,
+        employeeCount: additionalForm.employees,
+        certifications: additionalForm.certifications,
+        updatedAt: new Date().toISOString()
+      });
+      
+      setProfileData(prev => ({ ...prev, additional: additionalForm }));
+      setEditAdditional(false);
+      toast.success('Additional information updated successfully!');
+    } catch (error) {
+      console.error('Error updating additional info:', error);
+      toast.error('Failed to update additional information');
+    }
   };
 
   // Handle profile image upload
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setProfileImage(URL.createObjectURL(file));
-      setEditProfileImage(false);
+    if (!file || !user?.uid) return;
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please upload an image file');
+      return;
+    }
+    
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image size should be less than 5MB');
+      return;
+    }
+    
+    try {
+      toast.loading('Uploading profile image...');
+      
+      // Convert file to base64
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const base64String = event.target.result.split(',')[1];
+          
+          // Call Firebase Cloud Function to handle upload
+          const response = await fetch('https://us-central1-ricemill-lk.cloudfunctions.net/uploadProfileImage', {
+            method: 'POST',
+            mode: 'cors',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${await user.getIdToken()}`
+            },
+            body: JSON.stringify({
+              uid: user.uid,
+              fileName: file.name,
+              fileType: file.type,
+              base64Data: base64String,
+              timestamp: Date.now()
+            })
+          });
+          
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Upload failed: ${response.statusText}`);
+          }
+          
+          const data = await response.json();
+          const downloadURL = data.downloadURL;
+          
+          // Update user profile in database
+          const userRef = ref(db, `users/${user.uid}`);
+          await update(userRef, {
+            profileImage: downloadURL,
+            updatedAt: new Date().toISOString()
+          });
+          
+          setProfileImage(downloadURL);
+          setEditProfileImage(false);
+          toast.dismiss();
+          toast.success('Profile image updated successfully!');
+        } catch (error) {
+          console.error('Error uploading image:', error);
+          toast.dismiss();
+          toast.error(error.message || 'Failed to upload profile image');
+        }
+      };
+      
+      reader.onerror = () => {
+        toast.dismiss();
+        toast.error('Failed to read file');
+      };
+      
+      reader.readAsDataURL(file);
+    } catch (error) {
+      console.error('Error processing image:', error);
+      toast.dismiss();
+      toast.error('Failed to process profile image');
     }
   };
 
@@ -169,7 +375,10 @@ export function Profile() {
                 </h3>
                 <button 
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center"
-                  onClick={() => setEditPersonal(true)}
+                  onClick={() => {
+                    setPersonalForm(profileData.personal);
+                    setEditPersonal(true);
+                  }}
                 >
                   <EditIcon className="h-4 w-4 mr-1" />
                   Edit
@@ -208,7 +417,10 @@ export function Profile() {
                 </h3>
                 <button 
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center"
-                  onClick={() => setEditBusiness(true)}
+                  onClick={() => {
+                    setBusinessForm(profileData.business);
+                    setEditBusiness(true);
+                  }}
                 >
                   <EditIcon className="h-4 w-4 mr-1" />
                   Edit
@@ -262,7 +474,10 @@ export function Profile() {
                 </h3>
                 <button 
                   className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center"
-                  onClick={() => setEditAdditional(true)}
+                  onClick={() => {
+                    setAdditionalForm(profileData.additional);
+                    setEditAdditional(true);
+                  }}
                 >
                   <EditIcon className="h-4 w-4 mr-1" />
                   Edit
@@ -300,7 +515,7 @@ export function Profile() {
               </div>
               <div className="ml-4">
                 <h3 className="text-sm font-medium text-gray-500">Member Since</h3>
-                <p className="text-lg font-semibold text-gray-900">2005</p>
+                <p className="text-lg font-semibold text-gray-900">{stats.memberSince || 'N/A'}</p>
               </div>
             </div>
           </div>
@@ -311,7 +526,7 @@ export function Profile() {
               </div>
               <div className="ml-4">
                 <h3 className="text-sm font-medium text-gray-500">Total Orders</h3>
-                <p className="text-lg font-semibold text-gray-900">1,247</p>
+                <p className="text-lg font-semibold text-gray-900">{stats.totalOrders.toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -322,7 +537,7 @@ export function Profile() {
               </div>
               <div className="ml-4">
                 <h3 className="text-sm font-medium text-gray-500">Active Plans</h3>
-                <p className="text-lg font-semibold text-gray-900">Premium</p>
+                <p className="text-lg font-semibold text-gray-900">{stats.activePlan}</p>
               </div>
             </div>
           </div>
@@ -345,7 +560,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="fullName"
-                  value={personalForm.fullName}
+                  value={personalForm.fullName || ''}
                   onChange={handlePersonalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -355,7 +570,7 @@ export function Profile() {
                 <input
                   type="email"
                   name="email"
-                  value={personalForm.email}
+                  value={personalForm.email || ''}
                   onChange={handlePersonalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -365,7 +580,7 @@ export function Profile() {
                 <input
                   type="tel"
                   name="phone"
-                  value={personalForm.phone}
+                  value={personalForm.phone || ''}
                   onChange={handlePersonalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -375,7 +590,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="dob"
-                  value={personalForm.dob}
+                  value={personalForm.dob || ''}
                   onChange={handlePersonalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -416,7 +631,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="businessName"
-                  value={businessForm.businessName}
+                  value={businessForm.businessName || ''}
                   onChange={handleBusinessChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -426,7 +641,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="gstNumber"
-                  value={businessForm.gstNumber}
+                  value={businessForm.gstNumber || ''}
                   onChange={handleBusinessChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -435,7 +650,7 @@ export function Profile() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Business Address</label>
                 <textarea
                   name="businessAddress"
-                  value={businessForm.businessAddress}
+                  value={businessForm.businessAddress || ''}
                   onChange={handleBusinessChange}
                   rows="3"
                   className="w-full p-2 border border-gray-300 rounded-md"
@@ -446,7 +661,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="established"
-                  value={businessForm.established}
+                  value={businessForm.established || ''}
                   onChange={handleBusinessChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -455,7 +670,7 @@ export function Profile() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Business Type</label>
                 <select
                   name="businessType"
-                  value={businessForm.businessType}
+                  value={businessForm.businessType || 'Private Limited'}
                   onChange={handleBusinessChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 >
@@ -501,7 +716,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="primaryBusiness"
-                  value={additionalForm.primaryBusiness}
+                  value={additionalForm.primaryBusiness || ''}
                   onChange={handleAdditionalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -511,7 +726,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="annualTurnover"
-                  value={additionalForm.annualTurnover}
+                  value={additionalForm.annualTurnover || ''}
                   onChange={handleAdditionalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -521,7 +736,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="employees"
-                  value={additionalForm.employees}
+                  value={additionalForm.employees || ''}
                   onChange={handleAdditionalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />
@@ -531,7 +746,7 @@ export function Profile() {
                 <input
                   type="text"
                   name="certifications"
-                  value={additionalForm.certifications}
+                  value={additionalForm.certifications || ''}
                   onChange={handleAdditionalChange}
                   className="w-full p-2 border border-gray-300 rounded-md"
                 />

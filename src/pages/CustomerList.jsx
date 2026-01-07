@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, 
   Plus,
@@ -21,8 +21,15 @@ import {
   XCircle,
   X
 } from 'lucide-react';
+import { ref, get, onValue, set } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 
 export function CustomerList() {
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('All');
   const [viewMode, setViewMode] = useState('grid');
@@ -42,6 +49,9 @@ export function CustomerList() {
     paymentTerms: '30 Days',
     notes: ''
   });
+  const [showPopup, setShowPopup] = useState(false);
+  const [popupType, setPopupType] = useState('success'); // 'success' or 'error'
+  const [popupMessage, setPopupMessage] = useState('');
 
   // KPI Card Component (similar to dashboard)
   const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, unit = "" }) => (
@@ -82,122 +92,7 @@ export function CustomerList() {
   };
 
   // Simple customer data
-  const [customers, setCustomers] = useState([
-    {
-      id: 1,
-      name: 'Lak Sathosa Supermarkets',
-      contact: '+94 11 234 5678',
-      email: 'orders@laksathosa.lk',
-      address: '123 Galle Road, Colombo 03',
-      type: 'Retail Chain',
-      status: 'Active',
-      creditLimit: 5000000,
-      creditUsed: 2850000,
-      creditAvailable: 2150000,
-      totalOrders: 145,
-      totalSpent: 45000000,
-      avgOrderValue: 310345,
-      lastOrder: '2024-01-15',
-      paymentTerms: '30 Days',
-      primaryContact: 'Mr. Rajapaksa',
-      pendingAmount: 1250000,
-    },
-    {
-      id: 2,
-      name: 'Keells Supermarket Chain',
-      contact: '+94 11 345 6789',
-      email: 'purchase@keells.lk',
-      address: '456 Union Place, Colombo 02',
-      type: 'Retail Chain',
-      status: 'Active',
-      creditLimit: 8000000,
-      creditUsed: 4500000,
-      creditAvailable: 3500000,
-      totalOrders: 232,
-      totalSpent: 72000000,
-      avgOrderValue: 310345,
-      lastOrder: '2024-01-14',
-      paymentTerms: '15 Days',
-      primaryContact: 'Mr. Mendis',
-      pendingAmount: 0,
-    },
-    {
-      id: 3,
-      name: 'Cargills Food City',
-      contact: '+94 11 456 7890',
-      email: 'procurement@cargills.lk',
-      address: '789 Darley Road, Colombo 10',
-      type: 'Retail Chain',
-      status: 'Active',
-      creditLimit: 3000000,
-      creditUsed: 1250000,
-      creditAvailable: 1750000,
-      totalOrders: 98,
-      totalSpent: 32000000,
-      avgOrderValue: 326530,
-      lastOrder: '2024-01-13',
-      paymentTerms: '45 Days',
-      primaryContact: 'Mr. Silva',
-      pendingAmount: 2500000,
-    },
-    {
-      id: 4,
-      name: 'Hilton Colombo Restaurants',
-      contact: '+94 11 567 8901',
-      email: 'supplies@hilton.lk',
-      address: '2 Sir Chittampalam Gardiner Mawatha, Colombo 02',
-      type: 'Restaurant',
-      status: 'Active',
-      creditLimit: 2000000,
-      creditUsed: 850000,
-      creditAvailable: 1150000,
-      totalOrders: 68,
-      totalSpent: 18000000,
-      avgOrderValue: 264705,
-      lastOrder: '2024-01-12',
-      paymentTerms: 'COD',
-      primaryContact: 'Chef Kamal',
-      pendingAmount: 0,
-    },
-    {
-      id: 5,
-      name: 'Nawarathne Wholesalers',
-      contact: '+94 36 234 5678',
-      email: 'orders@nawarathne.lk',
-      address: 'Main Street, Kandy',
-      type: 'Wholesaler',
-      status: 'Active',
-      creditLimit: 1200000,
-      creditUsed: 450000,
-      creditAvailable: 750000,
-      totalOrders: 85,
-      totalSpent: 15000000,
-      avgOrderValue: 176470,
-      lastOrder: '2024-01-08',
-      paymentTerms: '30 Days',
-      primaryContact: 'Mr. Nawarathne',
-      pendingAmount: 0,
-    },
-    {
-      id: 6,
-      name: 'Polonnaruwa Rice Mill',
-      contact: '+94 27 345 6789',
-      email: 'sales@polonnaruwamill.lk',
-      address: 'Polonnaruwa Main Road',
-      type: 'Distributor',
-      status: 'Inactive',
-      creditLimit: 2500000,
-      creditUsed: 0,
-      creditAvailable: 2500000,
-      totalOrders: 38,
-      totalSpent: 12000000,
-      avgOrderValue: 315789,
-      lastOrder: '2023-12-20',
-      paymentTerms: 'COD',
-      primaryContact: 'Mr. Weerasinghe',
-      pendingAmount: 0,
-    }
-  ]);
+  const [customers, setCustomers] = useState([]);
 
   const filteredCustomers = customers.filter(customer => {
     const matchesSearch = 
@@ -217,6 +112,47 @@ export function CustomerList() {
       default: return 0;
     }
   });
+
+  // subscribe to customers realtime
+  useEffect(() => {
+    if (!userEmail) {
+      console.log('CustomerList: No userEmail, skipping customer load');
+      return;
+    }
+    
+    console.log('CustomerList: Setting up realtime listener for userEmail:', userEmail);
+    
+    let unsub = null;
+    const load = async () => {
+      try {
+        const snapshot = await get(ref(db, 'customers'));
+        if (snapshot.exists()) {
+          const list = filterSnapshotByOwner(snapshot, userEmail);
+          console.log('CustomerList: Initial load found', list.length, 'customers');
+          setCustomers(list);
+        } else {
+          console.log('CustomerList: No customers found in Firebase');
+          setCustomers([]);
+        }
+
+        unsub = onValue(ref(db, 'customers'), snap => {
+          if (snap.exists()) {
+            const list = filterSnapshotByOwner(snap, userEmail);
+            console.log('CustomerList: Realtime update - found', list.length, 'customers');
+            setCustomers(list);
+          } else {
+            console.log('CustomerList: Realtime update - no customers');
+            setCustomers([]);
+          }
+        });
+      } catch (err) {
+        console.error('Failed to load customers', err);
+      }
+    };
+
+    load();
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [userEmail]);
 
   // Calculate KPI stats
   const calculateKPIs = () => {
@@ -242,35 +178,79 @@ export function CustomerList() {
 
   const stats = calculateKPIs();
 
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
+    if (!userEmail) {
+      setPopupType('error');
+      setPopupMessage('User email not found. Please refresh and try again.');
+      setShowPopup(true);
+      return;
+    }
+
+    if (!newCustomer.name || !newCustomer.contact) {
+      setPopupType('error');
+      setPopupMessage('Please fill in customer name and contact details.');
+      setShowPopup(true);
+      return;
+    }
+
+    // create new customer id and persist to Firebase
+    const id = `cust_${Date.now()}`;
     const newCustomerWithId = {
       ...newCustomer,
-      id: customers.length + 1,
+      id,
+      owner_email: userEmail, // Add owner field for filtering
       creditUsed: 0,
       creditAvailable: newCustomer.creditLimit,
       totalOrders: 0,
       totalSpent: 0,
       avgOrderValue: 0,
       lastOrder: 'Never',
-      pendingAmount: 0
+      pendingAmount: 0,
+      created_at: new Date().toISOString()
     };
 
-    setCustomers(prev => [...prev, newCustomerWithId]);
-    setIsAddCustomerModalOpen(false);
-    
-    // Reset form
-    setNewCustomer({
-      name: '',
-      contact: '',
-      email: '',
-      address: '',
-      type: 'Wholesaler',
-      status: 'Active',
-      creditLimit: 0,
-      primaryContact: '',
-      paymentTerms: '30 Days',
-      notes: ''
-    });
+    console.log('Adding customer to Firebase:', newCustomerWithId);
+
+    try {
+      // First close the modal
+      setIsAddCustomerModalOpen(false);
+      
+      // Save to Firebase - the realtime listener will automatically update the list
+      await set(ref(db, `customers/${id}`), newCustomerWithId);
+      
+      console.log('Customer added successfully to Firebase');
+      
+      setPopupType('success');
+      setPopupMessage(`Customer "${newCustomer.name}" added successfully!`);
+      setShowPopup(true);
+      
+      // Auto-hide popup after 3 seconds
+      setTimeout(() => setShowPopup(false), 3000);
+      
+      // Reset form
+      setNewCustomer({
+        name: '',
+        contact: '',
+        email: '',
+        address: '',
+        type: 'Wholesaler',
+        status: 'Active',
+        creditLimit: 0,
+        primaryContact: '',
+        paymentTerms: '30 Days',
+        notes: ''
+      });
+    } catch (err) {
+      // Reopen modal on error
+      setIsAddCustomerModalOpen(true);
+      console.error('Failed to save customer to Firebase:', err);
+      setPopupType('error');
+      setPopupMessage('Failed to add customer: ' + err.message);
+      setShowPopup(true);
+      
+      // Auto-hide error popup after 5 seconds
+      setTimeout(() => setShowPopup(false), 5000);
+    }
   };
 
   const getStatusBadge = (status) => {
@@ -594,6 +574,19 @@ export function CustomerList() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Address
+                  </label>
+                  <textarea
+                    value={newCustomer.address}
+                    onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
+                    className="w-full px-4 py-3 bg-gray-50/80 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition resize-none"
+                    placeholder="Enter customer address"
+                    rows="3"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Customer Type
                   </label>
                   <select
@@ -735,6 +728,80 @@ export function CustomerList() {
           </div>
         </div>
       )}
+
+      {/* Success/Error Popup */}
+      {showPopup && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-8 z-50">
+          <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl max-w-md w-full border border-gray-200">
+            <div className="p-8 text-center">
+              <div className={`w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center ${
+                popupType === 'success' 
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-600' 
+                  : 'bg-gradient-to-br from-red-500 to-pink-600'
+              }`}>
+                {popupType === 'success' ? (
+                  <CheckCircle className="w-8 h-8 text-white" />
+                ) : (
+                  <XCircle className="w-8 h-8 text-white" />
+                )}
+              </div>
+              <h3 className={`text-xl font-bold mb-2 ${
+                popupType === 'success' ? 'text-emerald-700' : 'text-red-700'
+              }`}>
+                {popupType === 'success' ? 'Success!' : 'Error!'}
+              </h3>
+              <p className="text-gray-600 mb-6">{popupMessage}</p>
+              <button
+                onClick={() => setShowPopup(false)}
+                className={`px-6 py-3 rounded-xl font-semibold text-white ${
+                  popupType === 'success' 
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:shadow-lg' 
+                    : 'bg-gradient-to-r from-red-500 to-pink-600 hover:shadow-lg'
+                } transition`}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// Load customers from Firebase realtime on module mount
+// (placed after component to keep component code focused)
+function useCustomersRealtime(setCustomers) {
+  useEffect(() => {
+    let unsub = null;
+    const load = async () => {
+      try {
+        const snapshot = await get(ref(db, 'customers'));
+        if (snapshot.exists()) {
+          const list = [];
+          snapshot.forEach(child => {
+            list.push({ id: child.key, ...child.val() });
+          });
+          setCustomers(list);
+        }
+
+        // subscribe
+        unsub = onValue(ref(db, 'customers'), snap => {
+          if (snap.exists()) {
+            const list = [];
+            snap.forEach(child => list.push({ id: child.key, ...child.val() }));
+            setCustomers(list);
+          } else {
+            setCustomers([]);
+          }
+        });
+      } catch (err) {
+        console.error('Failed to load customers from Firebase', err);
+      }
+    };
+
+    load();
+
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [setCustomers]);
 }

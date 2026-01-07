@@ -25,6 +25,7 @@ import {
   Activity
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import inventoryUpdateService from '../services/inventoryUpdateService';
 
 export default function InventoryHistory() {
   const navigate = useNavigate();
@@ -40,115 +41,91 @@ export default function InventoryHistory() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [chartView, setChartView] = useState('grid');
 
-  // Mock history data
-  const mockHistory = [
-    {
-      id: 'TXN001',
-      date: '2024-01-15',
-      productId: 'RICE001',
-      productName: 'Nadu Raw Rice',
-      type: 'in',
-      transactionType: 'Purchase',
-      quantity: 50,
-      unit: 'bags',
-      kgPerBag: 50,
-      totalKg: 2500,
-      previousStock: 5000,
-      newStock: 7500,
-      pricePerKg: 45,
-      totalValue: 112500,
-      performedBy: 'Admin User',
-      notes: 'New shipment from Tamil Nadu supplier. Quality verified and approved.',
-      reference: 'PO-2024-001',
-      warehouse: 'Warehouse A',
-      supplier: 'Tamil Nadu Rice Mills',
-      qualityScore: 95,
-      trend: +25
-    },
-    {
-      id: 'TXN002',
-      date: '2024-01-14',
-      productId: 'RICE002',
-      productName: 'Samba Rice',
-      type: 'out',
-      transactionType: 'Sale',
-      quantity: 20,
-      unit: 'bags',
-      kgPerBag: 50,
-      totalKg: 1000,
-      previousStock: 2200,
-      newStock: 1200,
-      pricePerKg: 60,
-      totalValue: 60000,
-      performedBy: 'Sales Manager',
-      notes: 'Bulk order for restaurant chain. Delivery completed on time.',
-      reference: 'SO-2024-015',
-      warehouse: 'Warehouse B',
-      customer: 'Premium Restaurants Ltd',
-      qualityScore: 92,
-      trend: -15
-    },
-    {
-      id: 'TXN003',
-      date: '2024-01-13',
-      productId: 'RICE003',
-      productName: 'Premium Basmati',
-      type: 'in',
-      transactionType: 'Transfer',
-      quantity: 40,
-      unit: 'bags',
-      kgPerBag: 25,
-      totalKg: 1000,
-      previousStock: 2500,
-      newStock: 3500,
-      pricePerKg: 120,
-      totalValue: 120000,
-      performedBy: 'Warehouse Manager',
-      notes: 'Transferred from Warehouse C to A for better storage conditions.',
-      reference: 'TRF-2024-003',
-      warehouse: 'Warehouse A',
-      fromWarehouse: 'Warehouse C',
-      qualityScore: 98,
-      trend: +40
-    },
-    {
-      id: 'TXN004',
-      date: '2024-01-12',
-      productId: 'RICE001',
-      productName: 'Nadu Raw Rice',
-      type: 'out',
-      transactionType: 'Sale',
-      quantity: 25,
-      unit: 'bags',
-      kgPerBag: 50,
-      totalKg: 1250,
-      previousStock: 8750,
-      newStock: 7500,
-      pricePerKg: 45,
-      totalValue: 56250,
-      performedBy: 'Sales Executive',
-      notes: 'Regular wholesale customer order.',
-      reference: 'SO-2024-012',
-      warehouse: 'Warehouse A',
-      customer: 'Local Wholesaler',
-      qualityScore: 94,
-      trend: -12
-    }
-  ];
-
+  // Load real history from Firebase
   useEffect(() => {
-    setHistory(mockHistory);
+    let unsub = null;
+
+    const load = async () => {
+      try {
+        // initial load
+        const updates = await inventoryUpdateService.getRecentStockUpdates(200);
+        // normalize records and derive type (in/out)
+        const normalized = updates.map(u => {
+          const incomingTypes = ['Purchase', 'Return', 'Initial Stock', 'Adjustment'];
+          const outgoingTypes = ['Sale', 'Damage', 'Quality Rejection'];
+          const type = incomingTypes.includes(u.transactionType) ? 'in' : (outgoingTypes.includes(u.transactionType) ? 'out' : 'in');
+          return {
+            id: u.id,
+            created_at: u.created_at || u.updated_at || u.timestamp,
+            productId: u.productId,
+            productName: u.productName || u.productName,
+            transactionType: u.transactionType,
+            quantity: u.quantity || u.quantity_kg || 0,
+            unit: u.unit || (u.quantity_kg ? 'KG' : 'KG'),
+            quantity_kg: u.quantity_kg || (u.unit === 'bags' && u.quantity ? u.quantity * (u.kgPerBag || 50) : u.quantity) || 0,
+            warehouse: u.warehouse || '',
+            reference: u.reference || '',
+            notes: u.notes || '',
+            user: u.user || u.performedBy || '',
+            supplier: u.supplier || '',
+            customer: u.customer || '',
+            pricePerKg: u.price_per_kg || u.pricePerKg || 0,
+            createdRaw: u,
+            type
+          };
+        });
+        setHistory(normalized);
+
+        // realtime listener
+        unsub = inventoryUpdateService.setupUpdatesListener((updated) => {
+          const norm = updated.map(u => {
+            const incomingTypes = ['Purchase', 'Return', 'Initial Stock', 'Adjustment'];
+            const outgoingTypes = ['Sale', 'Damage', 'Quality Rejection'];
+            const type = incomingTypes.includes(u.transactionType) ? 'in' : (outgoingTypes.includes(u.transactionType) ? 'out' : 'in');
+            return {
+              id: u.id,
+              created_at: u.created_at || u.updated_at || u.timestamp,
+              productId: u.productId,
+              productName: u.productName || u.productName,
+              transactionType: u.transactionType,
+              quantity: u.quantity || u.quantity_kg || 0,
+              unit: u.unit || (u.quantity_kg ? 'KG' : 'KG'),
+              quantity_kg: u.quantity_kg || (u.unit === 'bags' && u.quantity ? u.quantity * (u.kgPerBag || 50) : u.quantity) || 0,
+              warehouse: u.warehouse || '',
+              reference: u.reference || '',
+              notes: u.notes || '',
+              user: u.user || u.performedBy || '',
+              supplier: u.supplier || '',
+              customer: u.customer || '',
+              pricePerKg: u.price_per_kg || u.pricePerKg || 0,
+              createdRaw: u,
+              type
+            };
+          });
+          setHistory(norm);
+        });
+      } catch (err) {
+        console.error('Error loading history from Firebase', err);
+      }
+    };
+
+    load();
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
   }, []);
 
   const filteredHistory = history.filter(item => {
-    const matchesSearch = item.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.performedBy.toLowerCase().includes(searchTerm.toLowerCase());
+    const performedBy = (item.user || item.performedBy || '').toString();
+    const matchesSearch = (item.productName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+               (item.reference || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+               performedBy.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = filterType === 'All' || item.type === filterType.toLowerCase();
     const matchesItem = !filterItem || item.productId === filterItem;
     
     // Date filtering
-    const itemDate = new Date(item.date);
+    const itemDate = new Date(item.created_at || item.date || item.createdRaw?.created_at || item.createdRaw?.timestamp || 0);
     const now = new Date();
     let cutoffDate = new Date();
     
@@ -175,15 +152,90 @@ export default function InventoryHistory() {
   });
 
   // Statistics
-  const totalIn = filteredHistory.filter(item => item.type === 'in').reduce((sum, item) => sum + item.totalKg, 0);
-  const totalOut = filteredHistory.filter(item => item.type === 'out').reduce((sum, item) => sum + item.totalKg, 0);
+  const totalIn = filteredHistory.filter(item => item.type === 'in').reduce((sum, item) => sum + (item.quantity_kg || item.totalKg || 0), 0);
+  const totalOut = filteredHistory.filter(item => item.type === 'out').reduce((sum, item) => sum + (item.quantity_kg || item.totalKg || 0), 0);
   const netChange = totalIn - totalOut;
-  const totalValue = filteredHistory.reduce((sum, item) => sum + item.totalValue, 0);
+  const totalValue = filteredHistory.reduce((sum, item) => {
+    const kg = item.quantity_kg || item.totalKg || 0;
+    const price = item.pricePerKg || item.createdRaw?.price_per_kg || 0;
+    return sum + (kg * price);
+  }, 0);
   const avgTransactionValue = filteredHistory.length > 0 ? totalValue / filteredHistory.length : 0;
 
   const viewDetails = (record) => {
     setSelectedRecord(record);
     setIsDetailModalOpen(true);
+  };
+
+  // Download JSON invoice for a record
+  const downloadInvoice = (record) => {
+    try {
+      const data = {
+        id: record.id,
+        reference: record.reference,
+        productId: record.productId,
+        productName: record.productName,
+        transactionType: record.transactionType,
+        type: record.type,
+        quantity: record.quantity,
+        unit: record.unit,
+        quantity_kg: record.quantity_kg || record.totalKg || 0,
+        pricePerKg: record.pricePerKg || record.createdRaw?.price_per_kg || 0,
+        totalValue: record.totalValue ?? ((record.quantity_kg || record.totalKg || 0) * (record.pricePerKg || record.createdRaw?.price_per_kg || 0)),
+        warehouse: record.warehouse,
+        supplier: record.supplier,
+        customer: record.customer,
+        user: record.user || record.performedBy || 'System',
+        notes: record.notes || ''
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `invoice-${record.id || Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download invoice', err);
+    }
+  };
+
+  const printReceipt = (record) => {
+    try {
+      const total = record.totalValue ?? ((record.quantity_kg || record.totalKg || 0) * (record.pricePerKg || record.createdRaw?.price_per_kg || 0));
+      const html = `
+        <html>
+          <head>
+            <title>Invoice ${record.reference || record.id}</title>
+            <style>body{font-family: Arial, sans-serif; padding:20px;} h1{font-size:18px;} table{width:100%;border-collapse:collapse;} td,th{padding:8px;border:1px solid #ddd}</style>
+          </head>
+          <body>
+            <h1>Invoice ${record.reference || record.id}</h1>
+            <p><strong>Product:</strong> ${record.productName || ''} (${record.productId || ''})</p>
+            <p><strong>Type:</strong> ${record.transactionType || record.type || ''}</p>
+            <p><strong>Quantity:</strong> ${record.quantity || 0} ${record.unit || ''} (${(record.quantity_kg || record.totalKg || 0)} KG)</p>
+            <p><strong>Price per KG:</strong> Rs.${(record.pricePerKg || record.createdRaw?.price_per_kg || 0)}</p>
+            <p><strong>Total:</strong> Rs.${total}</p>
+            <p><strong>Warehouse:</strong> ${record.warehouse || ''}</p>
+            <p><strong>Performed by:</strong> ${record.user || record.performedBy || 'System'}</p>
+            <hr />
+            <p>${record.notes || ''}</p>
+          </body>
+        </html>
+      `;
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        w.print();
+      }
+    } catch (err) {
+      console.error('Print failed', err);
+    }
   };
 
   const StatusBadge = ({ status, type }) => {
@@ -294,12 +346,12 @@ export default function InventoryHistory() {
         {/* View Toggle */}
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-1 border border-gray-200">
+            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-1 border border-gray-200 flex items-center">
               <button
                 onClick={() => setChartView('grid')}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                  chartView === 'grid' 
-                    ? 'bg-blue-600 text-white' 
+                  chartView === 'grid'
+                    ? 'bg-blue-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
@@ -307,9 +359,9 @@ export default function InventoryHistory() {
               </button>
               <button
                 onClick={() => setChartView('chart')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                  chartView === 'chart' 
-                    ? 'bg-blue-600 text-white' 
+                className={`ml-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  chartView === 'chart'
+                    ? 'bg-blue-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
@@ -451,11 +503,11 @@ export default function InventoryHistory() {
                   <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
                     <td className="px-8 py-6">
                       <div>
-                        <div className="font-bold text-gray-900">{formatDate(item.date)}</div>
+                        <div className="font-bold text-gray-900">{formatDate(item.created_at || item.date || item.createdRaw?.created_at)}</div>
                         <div className="text-xs text-gray-500 font-mono mt-1">{item.id}</div>
                         <div className="flex items-center gap-1 text-xs text-gray-500 mt-2">
                           <Clock className="h-3 w-3" />
-                          {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(item.created_at || item.date || item.createdRaw?.created_at || item.createdRaw?.timestamp || 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                     </td>
@@ -498,7 +550,7 @@ export default function InventoryHistory() {
                         <StatusBadge status={item.transactionType} type={item.type} />
                         <div className="flex items-center gap-2 text-sm text-gray-600">
                           <User className="h-4 w-4" />
-                          {item.performedBy}
+                          {item.user || item.performedBy || 'System'}
                         </div>
                         <div className="text-xs text-gray-500 font-mono">{item.reference}</div>
                       </div>
@@ -508,8 +560,8 @@ export default function InventoryHistory() {
                         <div className={`text-xl font-bold ${item.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
                           {item.type === 'in' ? '+' : '-'}{item.quantity} {item.unit}
                         </div>
-                        <div className="text-sm text-gray-900">{item.totalKg.toLocaleString()} KG</div>
-                        <div className="text-xs text-gray-500">{item.kgPerBag} KG per bag</div>
+                        <div className="text-sm text-gray-900">{((item.quantity_kg || item.totalKg || 0)).toLocaleString()} KG</div>
+                        <div className="text-xs text-gray-500">{item.kgPerBag || item.createdRaw?.kgPerBag || 'N/A'} KG per bag</div>
                       </div>
                     </td>
                     <td className="px-8 py-6">
@@ -527,8 +579,8 @@ export default function InventoryHistory() {
                     </td>
                     <td className="px-8 py-6">
                       <div>
-                        <div className="text-xl font-bold text-gray-900">Rs.{item.totalValue.toLocaleString()}</div>
-                        <div className="text-sm text-gray-600">Rs.{item.pricePerKg}/KG</div>
+                        <div className="text-xl font-bold text-gray-900">Rs.{((item.totalValue ?? ((item.quantity_kg || item.totalKg || 0) * (item.pricePerKg || item.createdRaw?.price_per_kg || 0))) ).toLocaleString()}</div>
+                        <div className="text-sm text-gray-600">Rs.{(item.pricePerKg || item.createdRaw?.price_per_kg || 0)}/KG</div>
                         <div className="text-xs text-gray-500 mt-2">Total value</div>
                       </div>
                     </td>
@@ -627,9 +679,7 @@ export default function InventoryHistory() {
                 </div>
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={() => {
-                      /* Download invoice */
-                    }}
+                    onClick={() => downloadInvoice(selectedRecord)}
                     className="p-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition"
                   >
                     <Download className="h-5 w-5" />
@@ -683,36 +733,48 @@ export default function InventoryHistory() {
                   <div className="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-3xl p-6">
                     <h3 className="text-xl font-bold text-gray-900 mb-6">Stock Movement</h3>
                     <div className="space-y-6">
-                      <div className="grid grid-cols-3 gap-4 text-center">
-                        <div className="p-4 bg-white/80 rounded-2xl">
-                          <div className="text-sm text-gray-600 mb-1">Before</div>
-                          <div className="text-2xl font-bold text-gray-900">{selectedRecord.previousStock.toLocaleString()} KG</div>
-                        </div>
-                        <div className="p-4 bg-white/80 rounded-2xl">
-                          <div className="text-sm text-gray-600 mb-1">Change</div>
-                          <div className={`text-2xl font-bold ${selectedRecord.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {selectedRecord.type === 'in' ? '+' : '-'}{selectedRecord.totalKg.toLocaleString()} KG
-                          </div>
-                        </div>
-                        <div className="p-4 bg-white/80 rounded-2xl">
-                          <div className="text-sm text-gray-600 mb-1">After</div>
-                          <div className="text-2xl font-bold text-blue-600">{selectedRecord.newStock.toLocaleString()} KG</div>
-                        </div>
+                        {(() => {
+                          const prev = selectedRecord.previousStock ?? null;
+                          const changeKg = selectedRecord.quantity_kg ?? selectedRecord.totalKg ?? 0;
+                          const after = selectedRecord.newStock ?? (prev !== null ? (selectedRecord.type === 'in' ? (prev + changeKg) : (prev - changeKg)) : null);
+                          const progressDenom = (prev !== null ? (prev + changeKg + 1000) : null);
+                          const percentChange = (prev && prev > 0) ? ((changeKg / prev) * 100) : null;
+
+                          return (
+                            <>
+                              <div className="grid grid-cols-3 gap-4 text-center">
+                                <div className="p-4 bg-white/80 rounded-2xl">
+                                  <div className="text-sm text-gray-600 mb-1">Before</div>
+                                  <div className="text-2xl font-bold text-gray-900">{prev !== null ? prev.toLocaleString() + ' KG' : 'N/A'}</div>
+                                </div>
+                                <div className="p-4 bg-white/80 rounded-2xl">
+                                  <div className="text-sm text-gray-600 mb-1">Change</div>
+                                  <div className={`text-2xl font-bold ${selectedRecord.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
+                                    {selectedRecord.type === 'in' ? '+' : '-'}{changeKg.toLocaleString()} KG
+                                  </div>
+                                </div>
+                                <div className="p-4 bg-white/80 rounded-2xl">
+                                  <div className="text-sm text-gray-600 mb-1">After</div>
+                                  <div className="text-2xl font-bold text-blue-600">{after !== null ? after.toLocaleString() + ' KG' : 'N/A'}</div>
+                                </div>
+                              </div>
+
+                              <div className="h-4 bg-gray-200 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-500"
+                                  style={{ 
+                                    width: `${progressDenom ? Math.min((after / progressDenom) * 100, 100) : 0}%` 
+                                  }}
+                                ></div>
+                              </div>
+
+                              <div className="text-center text-sm text-gray-600">
+                                {percentChange !== null ? `Stock level ${selectedRecord.type === 'in' ? 'increased' : 'decreased'} by ${percentChange.toFixed(1)}%` : 'Stock level change N/A'}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
-                      
-                      <div className="h-4 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-gradient-to-r from-emerald-500 to-teal-500"
-                          style={{ 
-                            width: `${(selectedRecord.newStock / (selectedRecord.previousStock + selectedRecord.totalKg + 1000)) * 100}%` 
-                          }}
-                        ></div>
-                      </div>
-                      
-                      <div className="text-center text-sm text-gray-600">
-                        Stock level increased by {((selectedRecord.totalKg / selectedRecord.previousStock) * 100).toFixed(1)}%
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -729,7 +791,7 @@ export default function InventoryHistory() {
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Date & Time</span>
                         <span className="font-bold text-gray-900">
-                          {new Date(selectedRecord.date).toLocaleString('en-IN', {
+                          {new Date(selectedRecord.created_at || selectedRecord.date || selectedRecord.createdRaw?.created_at || selectedRecord.createdRaw?.timestamp || 0).toLocaleString('en-IN', {
                             day: '2-digit',
                             month: 'long',
                             year: 'numeric',
@@ -740,7 +802,7 @@ export default function InventoryHistory() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Performed By</span>
-                        <span className="font-bold text-gray-900">{selectedRecord.performedBy}</span>
+                        <span className="font-bold text-gray-900">{selectedRecord.user || selectedRecord.performedBy || 'System'}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-gray-600">Warehouse</span>
@@ -768,11 +830,11 @@ export default function InventoryHistory() {
                       <div className="flex justify-between items-center">
                         <div>
                           <div className="text-sm text-gray-600">Total Value</div>
-                          <div className="text-4xl font-bold text-gray-900">Rs.{selectedRecord.totalValue.toLocaleString()}</div>
+                          <div className="text-4xl font-bold text-gray-900">Rs.{((selectedRecord.totalValue ?? ((selectedRecord.quantity_kg || selectedRecord.totalKg || 0) * (selectedRecord.pricePerKg || selectedRecord.createdRaw?.price_per_kg || 0))).toLocaleString())}</div>
                         </div>
                         <div className="text-right">
                           <div className="text-sm text-gray-600">Price per KG</div>
-                          <div className="text-2xl font-bold text-amber-600">Rs.{selectedRecord.pricePerKg}</div>
+                          <div className="text-2xl font-bold text-amber-600">Rs.{(selectedRecord.pricePerKg || selectedRecord.createdRaw?.price_per_kg || 0)}</div>
                         </div>
                       </div>
                       
@@ -783,7 +845,7 @@ export default function InventoryHistory() {
                         </div>
                         <div className="p-4 bg-white/80 rounded-2xl">
                           <div className="text-sm text-gray-600">Total Weight</div>
-                          <div className="text-xl font-bold text-gray-900">{selectedRecord.totalKg.toLocaleString()} KG</div>
+                          <div className="text-xl font-bold text-gray-900">{((selectedRecord.quantity_kg || selectedRecord.totalKg) || 0).toLocaleString()} KG</div>
                         </div>
                       </div>
                     </div>
@@ -815,9 +877,7 @@ export default function InventoryHistory() {
                   Close
                 </button>
                 <button
-                  onClick={() => {
-                    /* Print receipt */
-                  }}
+                  onClick={() => printReceipt(selectedRecord)}
                   className="px-8 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-medium rounded-xl hover:shadow-lg transition"
                 >
                   Print Receipt

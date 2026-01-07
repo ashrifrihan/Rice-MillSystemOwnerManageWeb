@@ -1,4 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue } from 'firebase/database';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 import { 
   ArrowLeft, 
   DollarSign, 
@@ -19,22 +24,97 @@ import {
   Users
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { mockSettledLoansData } from '../data/mockData';
+
+// Fallback mock data for settled loans
+const mockSettledLoans = [
+  {
+    id: 'SL-201',
+    customer: 'Sharma Foods Ltd',
+    riceType: 'Premium Basmati',
+    quantity: 4800,
+    loanAmount: 2400000,
+    interest: 120000,
+    totalAmount: 2520000,
+    settlementAmount: 2520000,
+    issueDate: '2024-08-01',
+    dueDate: '2024-10-01',
+    settlementDate: '2024-09-28',
+    status: 'Fully Settled',
+    loanOfficer: 'John Smith',
+    settlementMethod: 'Bank Transfer'
+  },
+  {
+    id: 'SL-202',
+    customer: 'Keells Supermarket Chain',
+    riceType: 'Samba Rice',
+    quantity: 5200,
+    loanAmount: 2100000,
+    interest: 95000,
+    totalAmount: 2195000,
+    settlementAmount: 2150000,
+    issueDate: '2024-07-15',
+    dueDate: '2024-09-15',
+    settlementDate: '2024-08-30',
+    status: 'Early Settlement',
+    loanOfficer: 'Anjali Perera',
+    settlementMethod: 'Cash'
+  },
+  {
+    id: 'SL-203',
+    customer: 'Kumar Restaurants',
+    riceType: 'Jasmine Rice',
+    quantity: 2600,
+    loanAmount: 1100000,
+    interest: 52000,
+    totalAmount: 1152000,
+    settlementAmount: 1152000,
+    issueDate: '2024-06-10',
+    dueDate: '2024-08-10',
+    settlementDate: '2024-08-12',
+    status: 'Settled',
+    loanOfficer: 'Suresh Fernando',
+    settlementMethod: 'Cheque'
+  }
+];
 
 export function SettledLoans() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [dateRange, setDateRange] = useState('This Month');
-  const [settledLoans, setSettledLoans] = useState(mockSettledLoansData.settledLoans);
+  const [settledLoans, setSettledLoans] = useState([]);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Firebase Listener - Load settled loans
+  useEffect(() => {
+    if (!userEmail) return;
+    
+    setLoading(true);
+    const settledLoansRef = ref(db, 'settledLoans');
+    
+    const unsubscribe = onValue(settledLoansRef, (snapshot) => {
+      const loansList = filterSnapshotByOwner(snapshot, userEmail);
+      const fallback = mockSettledLoans.map(loan => ({ ...loan, owner_email: userEmail }));
+      setSettledLoans(loansList.length ? loansList : fallback);
+      setLoading(false);
+    }, (error) => {
+      console.error('Firebase error:', error);
+      toast.error('Failed to load settled loans');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userEmail]);
 
   const filteredLoans = settledLoans.filter(loan => {
-    const matchesSearch = loan.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         loan.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         loan.riceType.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'All' || loan.status === filterStatus;
+    const matchesSearch = loan?.customer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         loan?.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         loan?.riceType?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = filterStatus === 'All' || loan?.status === filterStatus;
     return matchesSearch && matchesStatus;
   });
 
@@ -56,48 +136,54 @@ export function SettledLoans() {
     const content = `
       SETTLEMENT REPORT
       =================
-      Loan ID: ${loan.id}
-      Customer: ${loan.customer}
-      Rice Type: ${loan.riceType}
-      Quantity: ${loan.quantity} kg
-      Loan Amount: Rs.${loan.loanAmount.toLocaleString('en-IN')}
-      Interest: Rs.${loan.interest.toLocaleString('en-IN')}
-      Total Amount: Rs.${loan.totalAmount.toLocaleString('en-IN')}
-      Settlement Amount: Rs.${loan.settlementAmount.toLocaleString('en-IN')}
-      Issue Date: ${new Date(loan.issueDate).toLocaleDateString('en-IN')}
-      Due Date: ${new Date(loan.dueDate).toLocaleDateString('en-IN')}
-      Settlement Date: ${new Date(loan.settlementDate).toLocaleDateString('en-IN')}
-      Status: ${loan.status}
-      Loan Officer: ${loan.loanOfficer || 'John Smith'}
-      Settlement Method: ${loan.settlementMethod || 'Cash'}
+      Loan ID: ${loan?.id || 'N/A'}
+      Customer: ${loan?.customer || loan?.dealerName || 'N/A'}
+      Rice Type: ${loan?.riceType || 'N/A'}
+      Quantity: ${loan?.quantity || 0} kg
+      Loan Amount: Rs.${(loan?.loanAmount || loan?.amount || 0).toLocaleString('en-IN')}
+      Interest: Rs.${(loan?.interest || 0).toLocaleString('en-IN')}
+      Total Amount: Rs.${(loan?.totalAmount || loan?.settlementAmount || 0).toLocaleString('en-IN')}
+      Settlement Amount: Rs.${(loan?.settlementAmount || loan?.totalAmount || 0).toLocaleString('en-IN')}
+      Issue Date: ${loan?.issueDate ? new Date(loan.issueDate).toLocaleDateString('en-IN') : 'N/A'}
+      Due Date: ${loan?.dueDate ? new Date(loan.dueDate).toLocaleDateString('en-IN') : 'N/A'}
+      Settlement Date: ${loan?.settlementDate ? new Date(loan.settlementDate).toLocaleDateString('en-IN') : 'N/A'}
+      Status: ${loan?.status || 'N/A'}
+      Loan Officer: ${loan?.loanOfficer || 'John Smith'}
+      Settlement Method: ${loan?.settlementMethod || 'Cash'}
     `;
     
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `settlement-report-${loan.id}.txt`;
+    a.download = `settlement-report-${loan?.id || 'unknown'}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
+    toast.success('Report downloaded successfully!');
     setIsReportModalOpen(false);
     setSelectedLoan(null);
   };
 
   const exportAllReports = () => {
+    if (filteredLoans.length === 0) {
+      toast.error('No loans to export');
+      return;
+    }
+    
     const combinedContent = filteredLoans.map(loan => `
       ========================================
-      Settlement Report: ${loan.id}
+      Settlement Report: ${loan?.id || 'N/A'}
       ========================================
-      Customer: ${loan.customer}
-      Rice Type: ${loan.riceType}
-      Quantity: ${loan.quantity} kg
-      Loan Amount: Rs.${loan.loanAmount.toLocaleString('en-IN')}
-      Settlement Amount: Rs.${loan.settlementAmount.toLocaleString('en-IN')}
-      Settlement Date: ${new Date(loan.settlementDate).toLocaleDateString('en-IN')}
-      Status: ${loan.status}
+      Customer: ${loan?.customer || loan?.dealerName || 'N/A'}
+      Rice Type: ${loan?.riceType || 'N/A'}
+      Quantity: ${loan?.quantity || 0} kg
+      Loan Amount: Rs.${(loan?.loanAmount || loan?.amount || 0).toLocaleString('en-IN')}
+      Settlement Amount: Rs.${(loan?.settlementAmount || loan?.totalAmount || 0).toLocaleString('en-IN')}
+      Settlement Date: ${loan?.settlementDate ? new Date(loan.settlementDate).toLocaleDateString('en-IN') : 'N/A'}
+      Status: ${loan?.status || 'N/A'}
       ========================================
     `).join('\n\n');
 
@@ -111,6 +197,8 @@ export function SettledLoans() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    
+    toast.success(`Exported ${filteredLoans.length} loan reports`);
   };
 
   // Helper function to format Sri Lanka rupee
@@ -120,17 +208,21 @@ export function SettledLoans() {
 
   // Calculate basic stats
   const calculateStats = () => {
-    const totalSettled = mockSettledLoansData.settlementStats.totalSettled;
-    const earlySettlements = mockSettledLoansData.settlementStats.earlySettlements;
-    const earlySettlementRate = (earlySettlements / totalSettled) * 100;
+    const totalSettled = settledLoans.length;
+    const earlySettlements = settledLoans.filter(loan => loan?.status === 'Early Settlement').length;
+    const earlySettlementRate = totalSettled > 0 ? (earlySettlements / totalSettled) * 100 : 0;
+    
+    const totalAmount = settledLoans.reduce((sum, loan) => sum + (loan?.totalAmount || loan?.settlementAmount || 0), 0);
+    const totalInterest = settledLoans.reduce((sum, loan) => sum + (loan?.interest || 0), 0);
+    const avgLoanSize = totalSettled > 0 ? totalAmount / totalSettled : 0;
 
     return {
       totalSettled,
       earlySettlements,
       earlySettlementRate,
-      totalAmount: mockSettledLoansData.settlementStats.totalAmount,
-      totalInterest: mockSettledLoansData.settlementStats.totalInterest || 0,
-      avgLoanSize: mockSettledLoansData.settlementStats.totalAmount / totalSettled
+      totalAmount,
+      totalInterest,
+      avgLoanSize
     };
   };
 

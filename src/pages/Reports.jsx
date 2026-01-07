@@ -34,6 +34,9 @@ import {
   XCircleIcon,
   AlertCircleIcon
 } from 'lucide-react';
+import { ref, onValue, get, query, orderByChild, equalTo } from 'firebase/database';
+import { rtdb as db } from '../firebase/config';
+import toast from 'react-hot-toast';
 import { 
   Bar, 
   Line, 
@@ -168,139 +171,501 @@ export function Reports() {
   const [selectedProduct, setSelectedProduct] = useState('all');
   const [selectedBranch, setSelectedBranch] = useState('main');
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [comparisonPeriod, setComparisonPeriod] = useState('month');
   const [drillDownData, setDrillDownData] = useState(null);
   const [savedReports, setSavedReports] = useState([]);
   
-  // Mock data - In production, this would come from API
+  // Real data from Firebase
   const [dashboardData, setDashboardData] = useState({
     financial: {
-      totalRevenue: 24567890,
-      totalExpenses: 15678900,
-      netProfit: 8888990,
-      outstandingLoans: 4567890,
-      revenueGrowth: 12.5,
-      expenseGrowth: -3.2,
-      profitMargin: 36.2,
-      cashFlow: 4321000,
-      yoyGrowth: 18.7,
-      momGrowth: 4.2
+      totalRevenue: 0,
+      totalExpenses: 0,
+      netProfit: 0,
+      outstandingLoans: 0,
+      revenueGrowth: 0,
+      expenseGrowth: 0,
+      profitMargin: 0,
+      cashFlow: 0,
+      yoyGrowth: 0,
+      momGrowth: 0
     },
     operational: {
-      currentStock: 280500,
-      stockValue: 18764500,
-      activeDeliveries: 12,
-      riskAlerts: 7,
-      stockRiskLevel: 'medium',
-      productionEfficiency: 84.5,
-      wastageRate: 2.8,
-      orderAccuracy: 98.2,
-      deliveryOnTime: 85.5
+      currentStock: 0,
+      stockValue: 0,
+      activeDeliveries: 0,
+      riskAlerts: 0,
+      stockRiskLevel: 'safe',
+      productionEfficiency: 0,
+      wastageRate: 0,
+      orderAccuracy: 0,
+      deliveryOnTime: 0
     },
     charts: {
       revenueExpense: {
-        labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'],
-        revenue: [5200000, 5800000, 6100000, 5900000, 6300000],
-        expenses: [3200000, 3500000, 3800000, 3600000, 3700000],
-        profit: [2000000, 2300000, 2300000, 2300000, 2600000]
+        labels: [],
+        revenue: [],
+        expenses: [],
+        profit: []
       },
       salesBreakdown: {
-        labels: ['Samba', 'Nadu', 'Red Rice', 'Basmati', 'Paddy'],
-        values: [4500000, 3800000, 2900000, 5600000, 3200000],
-        percentages: [22.5, 19, 14.5, 28, 16]
+        labels: [],
+        values: [],
+        percentages: []
       },
       loanAnalytics: {
-        given: 15678900,
-        recovered: 11111010,
-        pending: 4567890
+        given: 0,
+        recovered: 0,
+        pending: 0
       },
       stockLevels: {
-        labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-        samba: [1200, 1100, 900, 800, 750, 700],
-        nadu: [2500, 2300, 2100, 2200, 2150, 2100],
-        redRice: [1800, 1700, 1650, 1600, 1550, 1500]
+        labels: [],
+        samba: [],
+        nadu: [],
+        redRice: []
       },
       deliveryPerformance: {
-        onTime: 85,
-        delayed: 15
+        onTime: 0,
+        delayed: 0
       },
       comparisonData: {
-        currentMonth: 24567890,
-        previousMonth: 21000000,
-        currentYear: 125678900,
-        previousYear: 105000000
+        currentMonth: 0,
+        previousMonth: 0,
+        currentYear: 0,
+        previousYear: 0
       }
     },
     tables: {
-      dealerRisk: [
-        { name: 'Dealer A', totalLoan: 1250000, recovered: 850000, pending: 400000, delayDays: 15, risk: 'high' },
-        { name: 'Dealer B', totalLoan: 980000, recovered: 750000, pending: 230000, delayDays: 8, risk: 'medium' },
-        { name: 'Dealer C', totalLoan: 1560000, recovered: 1250000, pending: 310000, delayDays: 3, risk: 'low' },
-        { name: 'Dealer D', totalLoan: 750000, recovered: 650000, pending: 100000, delayDays: 25, risk: 'high' }
-      ],
-      stockRisk: [
-        { product: 'Samba', currentStock: 120, minimum: 300, risk: 'high', category: 'Rice', unit: 'kg' },
-        { product: 'Nadu', currentStock: 600, minimum: 400, risk: 'safe', category: 'Rice', unit: 'kg' },
-        { product: 'Red Rice', currentStock: 350, minimum: 300, risk: 'medium', category: 'Rice', unit: 'kg' },
-        { product: 'Basmati', currentStock: 280, minimum: 200, risk: 'safe', category: 'Rice', unit: 'kg' }
-      ],
-      topCustomers: [
-        { name: 'Customer A', orders: 45, totalSpend: 2450000, creditUsed: 450000, region: 'Colombo' },
-        { name: 'Customer B', orders: 32, totalSpend: 1890000, creditUsed: 320000, region: 'Kandy' },
-        { name: 'Customer C', orders: 28, totalSpend: 1560000, creditUsed: 280000, region: 'Galle' },
-        { name: 'Customer D', orders: 25, totalSpend: 1320000, creditUsed: 250000, region: 'Jaffna' }
-      ]
+      dealerRisk: [],
+      stockRisk: [],
+      topCustomers: []
     },
-    aiInsights: [
-      { type: 'production', message: 'Reduce Samba production by 15% next month', priority: 'high', confidence: 92 },
-      { type: 'inventory', message: 'Increase stock reorder frequency for Samba', priority: 'medium', confidence: 78 },
-      { type: 'loan', message: 'High loan exposure with Dealer A - review terms', priority: 'high', confidence: 95 },
-      { type: 'delivery', message: 'Route optimization needed for Southern deliveries', priority: 'medium', confidence: 82 }
-    ],
+    aiInsights: [],
     alerts: {
-      stockShortage: 3,
-      loanDefault: 2,
-      deliveryDelay: 1,
-      attendanceIssue: 4,
-      qualityIssues: 2
+      stockShortage: 0,
+      loanDefault: 0,
+      deliveryDelay: 0,
+      attendanceIssue: 0,
+      qualityIssues: 0
     }
   });
 
-  // Real-time data fetching simulation
+  // Fetch real data from Firebase
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // In production, replace with actual API call
-        // const response = await fetch(`/api/reports?start=${dateRange[0].startDate.toISOString()}&end=${dateRange[0].endDate.toISOString()}&product=${selectedProduct}&branch=${selectedBranch}`);
-        // const data = await response.json();
-        // setDashboardData(data);
-        
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Update mock data with filter effects
-        const filteredData = {
-          ...dashboardData,
-          financial: {
-            ...dashboardData.financial,
-            totalRevenue: selectedProduct === 'all' ? 24567890 : 18000000,
-            revenueGrowth: selectedProduct === 'all' ? 12.5 : 8.2
-          }
-        };
-        setDashboardData(filteredData);
-      } catch (err) {
-        setError('Failed to fetch dashboard data. Please try again.');
-        console.error('Fetch error:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+    setLoading(true);
+    setError(null);
 
-    fetchData();
+    const unsubscribers = [];
+
+    try {
+      // Fetch Orders for revenue calculation
+      const ordersRef = ref(db, 'orders');
+      const unsubOrders = onValue(ordersRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const orders = Object.values(snapshot.val());
+          const startDate = dateRange[0].startDate.getTime();
+          const endDate = dateRange[0].endDate.getTime();
+          
+          const filteredOrders = orders.filter(order => {
+            const orderDate = new Date(order.placedOn || order.orderDate || order.createdAt).getTime();
+            return !isNaN(orderDate) && orderDate >= startDate && orderDate <= endDate;
+          });
+
+          // Apply product filter
+          const productFiltered = selectedProduct === 'all' 
+            ? filteredOrders 
+            : filteredOrders.filter(o => {
+                const items = o.items || [];
+                return items.some(item => 
+                  (item.product || '').toLowerCase().includes(selectedProduct.toLowerCase())
+                );
+              });
+
+          const totalRevenue = productFiltered.reduce((sum, order) => 
+            sum + (parseFloat(order.totalAmount) || 0), 0
+          );
+
+          const deliveredOrders = productFiltered.filter(o => o.status === 'Delivered');
+          const delayedOrders = productFiltered.filter(o => o.status === 'Delayed');
+          const activeDeliveries = productFiltered.filter(o => 
+            o.status === 'In Transit' || o.status === 'Confirmed'
+          ).length;
+
+          // Build weekly revenue chart for selected date range
+          const weeklyData = {};
+          productFiltered.forEach(order => {
+            const orderDate = new Date(order.placedOn || order.orderDate || order.createdAt);
+            if (!isNaN(orderDate.getTime())) {
+              const weekStart = new Date(orderDate);
+              weekStart.setDate(orderDate.getDate() - orderDate.getDay());
+              const weekKey = weekStart.toISOString().split('T')[0];
+              
+              if (!weeklyData[weekKey]) {
+                weeklyData[weekKey] = { revenue: 0, expenses: 0, profit: 0 };
+              }
+              const amount = parseFloat(order.totalAmount) || 0;
+              weeklyData[weekKey].revenue += amount;
+              weeklyData[weekKey].expenses += amount * 0.7; // 70% cost estimate
+              weeklyData[weekKey].profit += amount * 0.3; // 30% margin
+            }
+          });
+
+          const sortedWeeks = Object.keys(weeklyData).sort();
+          const weekLabels = sortedWeeks.map(w => new Date(w).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+          const revenueData = sortedWeeks.map(w => weeklyData[w].revenue);
+          const expensesData = sortedWeeks.map(w => weeklyData[w].expenses);
+          const profitData = sortedWeeks.map(w => weeklyData[w].profit);
+
+          const totalExpenses = expensesData.reduce((a, b) => a + b, 0);
+          const totalProfit = revenueData.reduce((a, b) => a + b, 0) - totalExpenses;
+
+          setDashboardData(prev => ({
+            ...prev,
+            financial: {
+              ...prev.financial,
+              totalRevenue,
+              totalExpenses,
+              netProfit: totalProfit,
+              profitMargin: totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0
+            },
+            operational: {
+              ...prev.operational,
+              activeDeliveries,
+              deliveryOnTime: deliveredOrders.length > 0 
+                ? ((deliveredOrders.length / (deliveredOrders.length + delayedOrders.length)) * 100).toFixed(1)
+                : 100
+            },
+            charts: {
+              ...prev.charts,
+              revenueExpense: {
+                labels: weekLabels.length > 0 ? weekLabels : ['No Data'],
+                revenue: revenueData.length > 0 ? revenueData : [0],
+                expenses: expensesData.length > 0 ? expensesData : [0],
+                profit: profitData.length > 0 ? profitData : [0]
+              },
+              deliveryPerformance: {
+                onTime: deliveredOrders.length,
+                delayed: delayedOrders.length
+              }
+            }
+          }));
+        } else {
+          console.warn('No orders found in Firebase');
+        }
+      }, (error) => {
+        console.error('Orders fetch error:', error);
+        toast.error('Failed to load orders data');
+      });
+      unsubscribers.push(unsubOrders);
+
+      // Fetch Products/Inventory for stock data
+      const productsRef = ref(db, 'products');
+      const unsubProducts = onValue(productsRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const products = Object.entries(snapshot.val()).map(([id, data]) => ({ id, ...data }));
+          
+          // Apply product filter
+          const filteredProducts = selectedProduct === 'all'
+            ? products
+            : products.filter(p => 
+                (p.category || '').toLowerCase().includes(selectedProduct.toLowerCase()) ||
+                (p.name || '').toLowerCase().includes(selectedProduct.toLowerCase())
+              );
+
+          const currentStock = filteredProducts.reduce((sum, p) => sum + (parseFloat(p.stock_quantity) || 0), 0);
+          const stockValue = filteredProducts.reduce((sum, p) => 
+            sum + ((parseFloat(p.stock_quantity) || 0) * (parseFloat(p.price_per_kg) || 0)), 0
+          );
+
+          const stockRisk = filteredProducts.map(p => {
+            const stock = parseFloat(p.stock_quantity) || 0;
+            const minStock = parseFloat(p.min_order_kg) || 100;
+            let risk = 'safe';
+            if (stock < minStock * 0.5) risk = 'high';
+            else if (stock < minStock) risk = 'medium';
+
+            return {
+              product: p.name,
+              currentStock: stock,
+              minimum: minStock,
+              risk,
+              category: p.category || 'Rice',
+              unit: 'kg'
+            };
+          });
+
+          const salesBreakdown = filteredProducts.reduce((acc, p) => {
+            const category = p.category || 'Other';
+            if (!acc[category]) acc[category] = 0;
+            acc[category] += (parseFloat(p.stock_quantity) || 0) * (parseFloat(p.price_per_kg) || 0);
+            return acc;
+          }, {});
+
+          const breakdownLabels = Object.keys(salesBreakdown);
+          const breakdownValues = Object.values(salesBreakdown);
+          const totalValue = breakdownValues.reduce((a, b) => a + b, 0);
+
+          setDashboardData(prev => ({
+            ...prev,
+            operational: {
+              ...prev.operational,
+              currentStock,
+              stockValue,
+              stockRiskLevel: stockRisk.some(s => s.risk === 'high') ? 'high' : 
+                             stockRisk.some(s => s.risk === 'medium') ? 'medium' : 'safe'
+            },
+            charts: {
+              ...prev.charts,
+              salesBreakdown: {
+                labels: breakdownLabels.length > 0 ? breakdownLabels : ['No Data'],
+                values: breakdownValues.length > 0 ? breakdownValues : [0],
+                percentages: totalValue > 0 
+                  ? breakdownValues.map(v => ((v / totalValue) * 100).toFixed(1))
+                  : [100]
+              }
+            },
+            tables: {
+              ...prev.tables,
+              stockRisk
+            },
+            alerts: {
+              ...prev.alerts,
+              stockShortage: stockRisk.filter(s => s.risk === 'high').length
+            }
+          }));
+        } else {
+          console.warn('No products found in Firebase');
+        }
+      }, (error) => {
+        console.error('Products fetch error:', error);
+        toast.error('Failed to load inventory data');
+      });
+      unsubscribers.push(unsubProducts);
+
+      // Fetch Loans data
+      const loansRef = ref(db, 'loans');
+      const unsubLoans = onValue(loansRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const loans = Object.values(snapshot.val());
+          const startDate = dateRange[0].startDate.getTime();
+          const endDate = dateRange[0].endDate.getTime();
+          
+          // Filter loans by date range
+          const filteredLoans = loans.filter(loan => {
+            const loanDate = new Date(loan.date || loan.createdAt || loan.givenDate).getTime();
+            return !isNaN(loanDate) && loanDate >= startDate && loanDate <= endDate;
+          });
+          
+          const given = filteredLoans.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0);
+          const recovered = filteredLoans.reduce((sum, l) => sum + (parseFloat(l.paidAmount) || 0), 0);
+          const pending = given - recovered;
+
+          const dealerRisk = filteredLoans.reduce((acc, loan) => {
+            const dealerName = loan.dealerName || loan.borrowerName || 'Unknown';
+            if (!acc[dealerName]) {
+              acc[dealerName] = {
+                name: dealerName,
+                totalLoan: 0,
+                recovered: 0,
+                pending: 0,
+                delayDays: 0,
+                risk: 'low'
+              };
+            }
+            acc[dealerName].totalLoan += parseFloat(loan.amount) || 0;
+            acc[dealerName].recovered += parseFloat(loan.paidAmount) || 0;
+            acc[dealerName].pending += (parseFloat(loan.amount) || 0) - (parseFloat(loan.paidAmount) || 0);
+            
+            // Calculate delay days
+            if (loan.dueDate && acc[dealerName].pending > 0) {
+              const dueDate = new Date(loan.dueDate).getTime();
+              const today = Date.now();
+              if (today > dueDate) {
+                acc[dealerName].delayDays = Math.max(
+                  acc[dealerName].delayDays,
+                  Math.floor((today - dueDate) / (1000 * 60 * 60 * 24))
+                );
+              }
+            }
+            
+            // Calculate risk based on pending amount and delay
+            const pendingRatio = acc[dealerName].totalLoan > 0 
+              ? acc[dealerName].pending / acc[dealerName].totalLoan 
+              : 0;
+            if (pendingRatio > 0.5 || acc[dealerName].delayDays > 30) acc[dealerName].risk = 'high';
+            else if (pendingRatio > 0.3 || acc[dealerName].delayDays > 15) acc[dealerName].risk = 'medium';
+            else acc[dealerName].risk = 'low';
+            
+            return acc;
+          }, {});
+
+          setDashboardData(prev => ({
+            ...prev,
+            financial: {
+              ...prev.financial,
+              outstandingLoans: pending
+            },
+            charts: {
+              ...prev.charts,
+              loanAnalytics: { given, recovered, pending }
+            },
+            tables: {
+              ...prev.tables,
+              dealerRisk: Object.values(dealerRisk)
+            },
+            alerts: {
+              ...prev.alerts,
+              loanDefault: Object.values(dealerRisk).filter(d => d.risk === 'high').length
+            }
+          }));
+        } else {
+          console.warn('No loans found in Firebase');
+        }
+      }, (error) => {
+        console.error('Loans fetch error:', error);
+        toast.error('Failed to load loans data');
+      });
+      unsubscribers.push(unsubLoans);
+
+      // Fetch trips/vehicles data
+      const tripsRef = ref(db, 'trips');
+      const unsubTrips = onValue(tripsRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const trips = Object.values(snapshot.val());
+          const startDate = dateRange[0].startDate.getTime();
+          const endDate = dateRange[0].endDate.getTime();
+          
+          const filteredTrips = trips.filter(trip => {
+            const tripDate = new Date(trip.startedAt || trip.createdAt).getTime();
+            return !isNaN(tripDate) && tripDate >= startDate && tripDate <= endDate;
+          });
+          
+          const delayedTrips = filteredTrips.filter(t => 
+            t.status === 'delayed' || t.status === 'Delayed'
+          ).length;
+
+          // Calculate route efficiency from trips
+          const routeMap = {};
+          filteredTrips.forEach(trip => {
+            const routeName = trip.route || 'Unknown Route';
+            if (!routeMap[routeName]) {
+              routeMap[routeName] = {
+                route: routeName,
+                distance: trip.distance || 0,
+                cost: trip.deliveryCost || 0,
+                deliveryTime: trip.estimatedTime || 0,
+                totalTrips: 0,
+                delayedCount: 0
+              };
+            }
+            routeMap[routeName].totalTrips += 1;
+            if (trip.status === 'delayed' || trip.status === 'Delayed') {
+              routeMap[routeName].delayedCount += 1;
+            }
+          });
+
+          const routeEfficiency = Object.values(routeMap).map(route => ({
+            ...route,
+            efficiency: route.totalTrips > 0 
+              ? ((route.totalTrips - route.delayedCount) / route.totalTrips) * 100
+              : 0
+          }));
+          
+          setDashboardData(prev => ({
+            ...prev,
+            alerts: {
+              ...prev.alerts,
+              deliveryDelay: delayedTrips
+            },
+            tables: {
+              ...prev.tables,
+              routeEfficiency
+            }
+          }));
+        } else {
+          console.warn('No trips found in Firebase');
+          setDashboardData(prev => ({
+            ...prev,
+            tables: {
+              ...prev.tables,
+              routeEfficiency: []
+            }
+          }));
+        }
+      }, (error) => {
+        console.error('Trips fetch error:', error);
+        toast.error('Failed to load trips data');
+      });
+      unsubscribers.push(unsubTrips);
+
+      // Fetch workers/attendance data
+      const workersRef = ref(db, 'workers');
+      const unsubWorkers = onValue(workersRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const workers = Object.values(snapshot.val());
+          const inactiveWorkers = workers.filter(w => w.status !== 'active').length;
+          
+          setDashboardData(prev => ({
+            ...prev,
+            alerts: {
+              ...prev.alerts,
+              attendanceIssue: inactiveWorkers
+            }
+          }));
+        } else {
+          console.warn('No workers data found');
+        }
+      }, (error) => {
+        console.error('Workers fetch error:', error);
+      });
+      unsubscribers.push(unsubWorkers);
+
+      // Fetch real attendance data
+      const attendanceRef = ref(db, 'attendance');
+      const unsubAttendance = onValue(attendanceRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const attendanceData = snapshot.val();
+          const startDate = dateRange[0].startDate.getTime();
+          const endDate = dateRange[0].endDate.getTime();
+          
+          // Build heatmap: last 7 days x workers
+          const last7Days = [];
+          for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            last7Days.push(dateStr);
+          }
+          
+          const heatmap = last7Days.map(dateStr => {
+            const dayData = attendanceData[dateStr] || {};
+            const workerStatuses = Object.values(dayData);
+            return workerStatuses.map(status => status === 'present' ? 1 : 0);
+          });
+          
+          setAttendanceHeatmapData(heatmap.length > 0 ? heatmap : [[]]);
+        } else {
+          setAttendanceHeatmapData([[]]);
+        }
+      }, (error) => {
+        console.error('Attendance fetch error:', error);
+        setAttendanceHeatmapData([[]]);
+      });
+      unsubscribers.push(unsubAttendance);
+
+      setLoading(false);
+
+    } catch (err) {
+      console.error('Firebase fetch error:', err);
+      setError('Failed to fetch data from Firebase');
+      toast.error('Failed to load reports data');
+      setLoading(false);
+    }
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
   }, [dateRange, selectedProduct, selectedBranch]);
 
   // Memoized chart configurations for performance
@@ -573,12 +938,8 @@ export function Reports() {
 
   const comparison = calculateComparison();
 
-  // Mock attendance heatmap data
-  const attendanceHeatmapData = Array.from({ length: 7 }, (_, day) => 
-    Array.from({ length: 20 }, (_, worker) => 
-      Math.random() > 0.15 ? 1 : 0 // 85% attendance rate
-    )
-  );
+  // Real attendance heatmap data from Firebase
+  const [attendanceHeatmapData, setAttendanceHeatmapData] = useState([]);
 
   // Enhanced product categories for filtering
   const productCategories = [
@@ -1345,17 +1706,20 @@ export function Reports() {
             })}
           </div>
           
-          {/* Enhanced Wastage Summary */}
+          {/* Real Delivery Summary */}
           <div className="mt-6 pt-6 border-t border-gray-200">
             <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <PercentIcon className="h-4 w-4 text-gray-500" />
-              Wastage & Quality Control Summary
+              <TruckIcon className="h-4 w-4 text-gray-500" />
+              Delivery Performance Summary
             </h4>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="text-center p-3 bg-gradient-to-br from-yellow-50 to-amber-50 rounded-xl border border-yellow-100">
-                <p className="text-xl font-bold text-yellow-700">2.5%</p>
-                <p className="text-xs font-medium text-yellow-800">Broken Rice</p>
-                <p className="text-xs text-yellow-600 mt-1">↓ 0.3% from last month</p>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="text-center p-3 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-100">
+                <p className="text-xl font-bold text-emerald-700">{dashboardData.operational.deliveryOnTime}%</p>
+                <p className="text-xs font-medium text-emerald-800">On-time Delivery</p>
+              </div>
+              <div className="text-center p-3 bg-gradient-to-br from-rose-50 to-red-50 rounded-xl border border-rose-100">
+                <p className="text-xl font-bold text-rose-700">{dashboardData.charts.deliveryPerformance.delayed}</p>
+                <p className="text-xs font-medium text-rose-800">Delayed Deliveries</p>
               </div>
               <div className="text-center p-3 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">
                 <p className="text-xl font-bold text-blue-700">1.2%</p>
@@ -1430,62 +1794,65 @@ export function Reports() {
               </div>
               <p className="text-sm text-gray-600">Distance vs cost per delivery with optimization suggestions</p>
             </div>
-            <button className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg text-sm font-medium hover:shadow-lg">
-              Optimize Routes
-            </button>
           </div>
           <div className="space-y-4">
-            {[
-              { route: 'Colombo City', distance: 50, cost: 12500, efficiency: 85, deliveryTime: '2.5 hrs', suggestions: 2 },
-              { route: 'Kandy Suburbs', distance: 120, cost: 28000, efficiency: 72, deliveryTime: '4 hrs', suggestions: 3 },
-              { route: 'Galle Coastal', distance: 180, cost: 42000, efficiency: 65, deliveryTime: '6 hrs', suggestions: 1 },
-              { route: 'Jaffna North', distance: 400, cost: 95000, efficiency: 45, deliveryTime: '12 hrs', suggestions: 4 },
-            ].map((route, index) => (
-              <div 
-                key={index} 
-                className="p-4 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-100 hover:shadow-sm transition cursor-pointer"
-                onClick={() => handleDrillDown('route', route)}
-              >
-                <div className="flex justify-between items-center mb-3">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900">{route.route}</p>
-                    <p className="text-xs text-gray-500">{route.distance}km • {route.deliveryTime} • {route.suggestions} optimizations</p>
-                  </div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-                    route.efficiency >= 80 ? 'bg-emerald-100 text-emerald-800' :
-                    route.efficiency >= 60 ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
-                    {route.efficiency}% Efficiency
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-600">Cost per delivery</p>
-                    <p className="text-sm font-medium text-gray-900">Rs. {route.cost.toLocaleString()}</p>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="w-32 h-2 bg-gray-200 rounded-full mr-3">
-                      <div 
-                        className={`h-full rounded-full ${
-                          route.efficiency >= 80 ? 'bg-emerald-500' :
-                          route.efficiency >= 60 ? 'bg-yellow-500' :
-                          'bg-red-500'
-                        }`}
-                        style={{ width: `${route.efficiency}%` }}
-                      />
+            {dashboardData.tables.routeEfficiency && dashboardData.tables.routeEfficiency.length > 0 ? (
+              dashboardData.tables.routeEfficiency.map((route, index) => {
+                const distance = Number(route.distance) || 0;
+                const deliveryTime = Number(route.deliveryTime) || 0;
+                const efficiency = Number(route.efficiency) || 0;
+                const cost = Number(route.cost) || 0;
+                const costPerKm = distance > 0 ? cost / distance : 0;
+                return (
+                  <div 
+                    key={index} 
+                    className="p-4 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-100 hover:shadow-sm transition cursor-pointer"
+                    onClick={() => handleDrillDown('route', route)}
+                  >
+                    <div className="flex justify-between items-center mb-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{route.route}</p>
+                        <p className="text-xs text-gray-500">{distance}km • {deliveryTime.toFixed(1)} hrs</p>
+                      </div>
+                      <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        efficiency >= 80 ? 'bg-emerald-100 text-emerald-800' :
+                        efficiency >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {efficiency.toFixed(0)}% Efficiency
+                      </div>
                     </div>
-                    <span className={`text-sm font-medium ${
-                      route.efficiency >= 80 ? 'text-emerald-600' :
-                      route.efficiency >= 60 ? 'text-yellow-600' :
-                      'text-red-600'
-                    }`}>
-                      {route.efficiency}%
-                    </span>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-gray-600">Cost per km</p>
+                        <p className="text-sm font-medium text-gray-900">Rs. {costPerKm.toFixed(0)}</p>
+                      </div>
+                      <div className="flex items-center">
+                        <div className="w-32 h-2 bg-gray-200 rounded-full mr-3">
+                          <div 
+                            className={`h-full rounded-full ${
+                              efficiency >= 80 ? 'bg-emerald-500' :
+                              efficiency >= 60 ? 'bg-yellow-500' :
+                              'bg-red-500'
+                            }`}
+                            style={{ width: `${Math.min(efficiency, 100)}%` }}
+                          />
+                        </div>
+                        <span className={`text-sm font-medium ${
+                          efficiency >= 80 ? 'text-emerald-600' :
+                          efficiency >= 60 ? 'text-yellow-600' :
+                          'text-red-600'
+                        }`}>
+                          {efficiency.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                );
+              })
+            ) : (
+              <div className="p-6 text-center text-gray-500">No trip data available</div>
+            )}
           </div>
         </div>
       </div>

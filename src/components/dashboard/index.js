@@ -1,7 +1,7 @@
 // File: C:\Users\RIHAN\Desktop\Rice-Mill-Owner-Web\src\components\dashboard\index.js
 export { KpiCard } from './KpiCard';
 export { StockTrendChart } from './StockTrendChart';
-export { PurchaseSalesChart } from './PurchaseSalesChart';
+
 export { RecentTransactions } from './RecentTransactions';
 export { QualityControlPanel } from './QualityControlPanel';
 export { VehicleDriverPanel } from './VehicleDriverPanel';

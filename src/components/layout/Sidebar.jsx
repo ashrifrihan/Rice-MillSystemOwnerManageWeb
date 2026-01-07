@@ -115,7 +115,7 @@ export function Sidebar() {
         { name: "Vehicles List", path: "/vehicles", icon: TruckIcon },
         { name: "Assign Transport", path: "/assign", icon: MapPinIcon },
         { name: "Live Vehicle Map", path: "/transport-gps", icon: MapIcon },
-        { name: "Transport History", path: "/TransportHistory", icon: CalendarIcon }
+        { name: "Transport History", path: "/transport-history", icon: CalendarIcon }
       ]
     },
     { 

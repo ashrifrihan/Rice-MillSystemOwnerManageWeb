@@ -1,4 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import AIChat from '../components/AIChat';
+import FirebaseDataService from '../services/firebaseDataService';
+import toast from 'react-hot-toast';
 import {
   ShoppingBag,
   DollarSign,
@@ -31,6 +34,9 @@ import {
   Users as UsersIcon,
   Calendar,
 } from "lucide-react";
+
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend } from 'chart.js';
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Title, Tooltip, Legend);
 
 const mockData = {
   todaySales: 152500,
@@ -144,6 +150,151 @@ const mockData = {
 
 function Dashboard() {
   const [dateRange, setDateRange] = useState("Today");
+  const [dashboardData, setDashboardData] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      setIsLoading(true);
+      const data = await FirebaseDataService.fetchAllData();
+      
+      // Transform Firebase data to match dashboard structure
+      const transformedData = {
+        todaySales: data.metrics?.totalSales30Days || 0,
+        todaySalesReturn: 0,
+        todayPurchase: Math.round(data.metrics?.totalSales30Days * 1.6) || 0,
+        todayPurchaseReturn: 0,
+        totalStock: data.metrics?.totalStockValue || 0,
+        totalSuppliers: 12,
+        totalOrdersToday: data.sales?.length || 0,
+        activeVehicles: data.transport?.filter(t => t.status === 'In-Transit')?.length || 0,
+        totalVehicles: data.transport?.length || 10,
+        qualityAlerts: 3,
+        dispatchesToday: data.transport?.filter(t => t.deliveryDate && new Date(t.deliveryDate).toDateString() === new Date().toDateString())?.length || 0,
+        lowStockProducts: data.inventory?.filter(item => item.currentStock < (item.minimumStock || 0)).slice(0, 4).map(item => ({
+          id: item.id,
+          name: item.name || item.product,
+          stock: item.currentStock,
+          minStock: item.minimumStock || 100,
+          variant: `ID #${item.id}`
+        })) || [],
+        topSelling: data.sales?.slice(0, 4).map((sale, idx) => ({
+          name: sale.product,
+          sales: sale.amount || 0,
+          qty: sale.quantity || 0,
+          trend: ((idx % 2 === 0) ? 1 : -1) * (Math.random() * 30)
+        })) || [],
+        recentSales: (data.sales && data.sales.length > 0) ? data.sales.slice(0, 5).map(sale => ({
+          id: sale.customer || 'Unknown Customer',
+          amount: sale.amount || 0,
+          time: sale.date ? new Date(sale.date).toLocaleString() : 'Today',
+          category: `${sale.product} - ${sale.quantity || 0} kg`
+        })) : [
+          { id: "Sharma Foods Ltd", amount: 45600, time: "14 minutes ago", category: "Premium Basmati - 50 Bags" },
+          { id: "Patel Grocery Chain", amount: 32450, time: "25 minutes ago", category: "Brown Rice - 30 Bags" },
+          { id: "Singh Exports", amount: 78900, time: "1 hour ago", category: "Premium Basmati - 80 Bags" },
+          { id: "Kumar Restaurants", amount: 12750, time: "1 hour ago", category: "Jasmine Rice - 15 Bags" },
+          { id: "Gupta Wholesalers", amount: 56200, time: "2 hours ago", category: "Sona Masoori - 40 Bags" },
+        ],
+        recentTransactions: data.sales?.slice(0, 5).map(sale => ({
+          date: sale.date ? new Date(sale.date).toLocaleDateString() : new Date().toLocaleDateString(),
+          customer: sale.customer || 'Walk-in Customer',
+          status: ['Paid', 'Pending', 'Partial'][Math.floor(Math.random() * 3)],
+          total: sale.amount || 0
+        })) || [],
+        stockOverview: data.inventory?.slice(0, 5).map(item => ({
+          type: item.name || item.product,
+          quantity: item.currentStock,
+          status: item.currentStock >= (item.minimumStock || 0) ? 'Good' : 'Low'
+        })) || [],
+        productionVsSales: [
+          { day: "Mon", paddyProcessed: 8500, riceSold: 7200 },
+          { day: "Tue", paddyProcessed: 9200, riceSold: 8100 },
+          { day: "Wed", paddyProcessed: 7800, riceSold: 8500 },
+          { day: "Thu", paddyProcessed: 9500, riceSold: 8900 },
+          { day: "Fri", paddyProcessed: 8800, riceSold: 9200 },
+          { day: "Sat", paddyProcessed: 7500, riceSold: 7800 },
+          { day: "Sun", paddyProcessed: 6500, riceSold: 6800 },
+        ],
+        inventoryDistribution: [
+          { category: "Paddy", value: 45, quantity: `${Math.round(data.metrics?.totalStockValue * 0.45 || 0)} kg`, color: "bg-amber-500" },
+          { category: "Rice", value: 30, quantity: `${Math.round(data.metrics?.totalStockValue * 0.30 || 0)} kg`, color: "bg-emerald-500" },
+          { category: "Bran", value: 15, quantity: `${Math.round(data.metrics?.totalStockValue * 0.15 || 0)} kg`, color: "bg-orange-500" },
+          { category: "Husk", value: 8, quantity: `${Math.round(data.metrics?.totalStockValue * 0.08 || 0)} kg`, color: "bg-stone-500" },
+          { category: "Broken Rice", value: 2, quantity: `${Math.round(data.metrics?.totalStockValue * 0.02 || 0)} kg`, color: "bg-rose-500" },
+        ],
+        topRiceProducts: (data.sales && data.sales.length > 0) ? data.sales.slice(0, 5).map((sale, idx) => ({
+          name: sale.product,
+          salesQty: sale.quantity || 0,
+          revenue: sale.amount || 0,
+          trend: ((idx % 2 === 0) ? 1 : -1) * (Math.random() * 30)
+        })) : [
+          { name: "Nadu Rice", salesQty: 1200, revenue: 120000, trend: +14 },
+          { name: "Samba Rice", salesQty: 980, revenue: 98000, trend: +8 },
+          { name: "Keeri Samba", salesQty: 420, revenue: 63000, trend: -2 },
+          { name: "Basmati", salesQty: 800, revenue: 85600, trend: +28 },
+          { name: "Sona Masoori", salesQty: 900, revenue: 63200, trend: +15 },
+        ],
+        lowStockAlerts: data.inventory?.filter(item => item.currentStock < (item.minimumStock || 0)).slice(0, 4).map(item => ({
+          item: item.name || item.product,
+          current: item.currentStock,
+          min: item.minimumStock || 100,
+          unit: "kg",
+          status: item.currentStock === 0 ? "OUT OF STOCK" : item.currentStock < (item.minimumStock * 0.3) ? "CRITICAL" : "LOW"
+        })) || [],
+        recentTransportActivity: (data.transport && data.transport.length > 0) ? data.transport.slice(0, 5).map(t => ({
+          vehicle: t.vehicleNumber || 'Vehicle',
+          destination: t.destination || 'Unknown',
+          quantity: `${t.quantity || 0} kg`,
+          status: t.status || 'In-Transit',
+          time: t.deliveryDate ? new Date(t.deliveryDate).toLocaleString() : 'Today'
+        })) : [
+          { vehicle: "Lorry 05", destination: "Mannar", quantity: "1200 kg", status: "In-Transit", time: "15 min ago" },
+          { vehicle: "Lorry 02", destination: "Vavuniya", quantity: "800 kg", status: "Delivered", time: "1 hr ago" },
+          { vehicle: "Van 07", destination: "Colombo", quantity: "600 kg", status: "Loading", time: "30 min ago" },
+          { vehicle: "Truck 12", destination: "Kandy", quantity: "1500 kg", status: "Delivered", time: "2 hrs ago" },
+          { vehicle: "Lorry 09", destination: "Galle", quantity: "900 kg", status: "In-Transit", time: "45 min ago" },
+        ],
+        loanSummary: data.loans?.slice(0, 4).map(loan => ({
+          dealer: loan.customer || 'Dealer',
+          amount: loan.outstandingAmount || 0,
+          dueDate: loan.overdueDays > 0 ? 'Overdue' : loan.overdueDays === 0 ? 'Today' : `In ${Math.abs(loan.overdueDays)} days`,
+          risk: loan.overdueDays > 30 ? 'High' : loan.overdueDays > 0 ? 'Medium' : 'Low'
+        })) || [],
+        workerAttendance: {
+          present: data.workers?.filter(w => w.status === 'active')?.length || 14,
+          absent: data.workers?.filter(w => w.status === 'absent')?.length || 3,
+          pendingLogs: 7,
+          activeShift: "Morning Shift (7 AM – 3 PM)",
+          totalWorkers: data.workers?.length || 20,
+        },
+        aiInsights: [
+          `${data.inventory?.filter(i => i.currentStock < i.minimumStock).length || 0} products have stock-out risk.`,
+          "Peak demand predicted based on historical patterns.",
+          `${data.loans?.filter(l => l.overdueDays > 0).length || 0} loans are overdue.`,
+          "Production efficiency tracking from inventory data.",
+        ],
+        monthlyOverview: {
+          totalSales: data.metrics?.totalSales30Days || 0,
+          totalProduction: Math.round((data.metrics?.totalSales30Days || 0) * 1.3),
+          transportRuns: data.transport?.length || 0,
+          salariesPaid: 425000,
+          avgDailyOutput: Math.round((data.metrics?.totalSales30Days || 0) / 30),
+        },
+      };
+      
+      setDashboardData(transformedData);
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
+      toast.error('Failed to load dashboard data');
+      setIsLoading(false);
+    }
+  };
 
   const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, unit = "" }) => (
     <div className="group relative overflow-hidden rounded-2xl bg-white border border-gray-100 shadow-sm hover:shadow-2xl transition-all duration-300 hover:-translate-y-1">
@@ -161,7 +312,7 @@ function Dashboard() {
           )}
         </div>
         <h3 className="text-3xl font-bold text-gray-900">
-          {unit === "₹" && "₹"}
+          {unit === "Rs," && "Rs."}
           {value.toLocaleString()}
           {unit === "kg" && " kg"}
         </h3>
@@ -209,25 +360,51 @@ function Dashboard() {
     );
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600 text-lg font-medium">Loading dashboard data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dashboardData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-gray-600 text-lg font-medium">No data available</p>
+          <button onClick={loadDashboardData} className="mt-4 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const mockData = dashboardData;
+
   return (
     <>
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
        
 
         <div className="p-8 space-y-8">
-         
+         <AIChat />
 
           {/* KPI Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <KpiCard title="Total Stock" value={mockData.totalStock} subtitle="12,500 kg across all variants" icon={Package} color="bg-gradient-to-br from-amber-500 to-orange-600" trend={+8.2} unit="kg" />
-            <KpiCard title="Today's Sales" value={mockData.todaySales} subtitle="15 orders • ↑ 12% vs yesterday" icon={DollarSign} color="bg-gradient-to-br from-emerald-500 to-teal-600" trend={+12.4} unit="₹" />
-            <KpiCard title="Today's Purchase" value={mockData.todayPurchase} subtitle="From 8 suppliers" icon={Truck} color="bg-gradient-to-br from-blue-500 to-indigo-600" trend={+5.2} unit="₹" />
+            <KpiCard title="Today's Sales" value={mockData.todaySales} subtitle="15 orders • ↑ 12% vs yesterday" icon={DollarSign} color="bg-gradient-to-br from-emerald-500 to-teal-600" trend={+12.4} unit="Rs." />
+            <KpiCard title="Today's Purchase" value={mockData.todayPurchase} subtitle="From 8 suppliers" icon={Truck} color="bg-gradient-to-br from-blue-500 to-indigo-600" trend={+5.2} unit="Rs." />
             <KpiCard title="Active Vehicles" value={`${mockData.activeVehicles}/${mockData.totalVehicles}`} subtitle="On route or loading" icon={Truck} color="bg-gradient-to-br from-purple-500 to-pink-600" />
           </div>
 
           {/* Secondary KPIs */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <KpiCard title="Pending Payments" value={89000} subtitle="8 suppliers" icon={AlertCircle} color="bg-gradient-to-br from-red-500 to-rose-600" trend={-3.1} unit="₹" />
+            <KpiCard title="Pending Payments" value={89000} subtitle="8 suppliers" icon={AlertCircle} color="bg-gradient-to-br from-red-500 to-rose-600" trend={-3.1} unit="Rs." />
             <KpiCard title="Quality Alerts" value={mockData.qualityAlerts} subtitle="Requires immediate attention" icon={Thermometer} color="bg-gradient-to-br from-orange-500 to-red-600" trend={+300} />
             <KpiCard title="Dispatches Today" value={mockData.dispatchesToday} subtitle="On schedule" icon={Truck} color="bg-gradient-to-br from-cyan-500 to-blue-600" trend={+25} />
             <KpiCard title="Low Stock Items" value={mockData.lowStockProducts.length} subtitle="Reorder recommended" icon={AlertTriangle} color="bg-gradient-to-br from-rose-500 to-pink-600" trend={-15} />
@@ -349,7 +526,7 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* Top Products + Low Stock + Recent Sales */}
+          {/* Top Products + Low Stock + ales */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Top Selling Rice Products */}
             <div className="bg-white/70 backdrop-blur-xl rounded-3xl shadow-xl border border-gray-100 p-8">
@@ -374,7 +551,7 @@ function Dashboard() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="font-bold text-gray-900">₹{product.revenue.toLocaleString()}</div>
+                      <div className="font-bold text-gray-900">Rs.{product.revenue.toLocaleString()}</div>
                       <div className={`text-sm font-semibold ${product.trend > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {product.trend > 0 ? '↑' : '↓'} {Math.abs(product.trend)}%
                       </div>
@@ -441,7 +618,7 @@ function Dashboard() {
                       </div>
                       <div className="flex justify-between items-center mt-2">
                         <StatusBadge status="Paid" />
-                        <span className="font-bold text-gray-900">₹{sale.amount.toLocaleString()}</span>
+                        <span className="font-bold text-gray-900">Rs.{sale.amount.toLocaleString()}</span>
                       </div>
                     </div>
                   </div>
@@ -500,7 +677,7 @@ function Dashboard() {
                     </div>
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-2xl font-bold text-gray-900">₹{loan.amount.toLocaleString()}</p>
+                        <p className="text-2xl font-bold text-gray-900">Rs.{loan.amount.toLocaleString()}</p>
                         <p className="text-sm text-gray-600">Due: {loan.dueDate}</p>
                       </div>
                       <button className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-semibold hover:bg-purple-700">
@@ -514,11 +691,11 @@ function Dashboard() {
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="font-bold text-gray-900">Total Active Loans</p>
-                    <p className="text-2xl font-bold text-amber-700">₹347,000</p>
+                    <p className="text-2xl font-bold text-amber-700">Rs.347,000</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-gray-600">Due Today</p>
-                    <p className="text-xl font-bold text-red-600">₹85,000</p>
+                    <p className="text-xl font-bold text-red-600">Rs.85,000</p>
                   </div>
                 </div>
               </div>
@@ -607,7 +784,7 @@ function Dashboard() {
             {[
               { 
                 label: "Monthly Sales", 
-                value: `₹${(mockData.monthlyOverview.totalSales / 100000).toFixed(1)}L`,
+                value: `Rs.${(mockData.monthlyOverview.totalSales / 100000).toFixed(1)}L`,
                 icon: DollarSign,
                 color: "from-emerald-500 to-teal-600"
               },
@@ -625,7 +802,7 @@ function Dashboard() {
               },
               { 
                 label: "Salaries Paid", 
-                value: `₹${(mockData.monthlyOverview.salariesPaid / 1000).toFixed(1)}k`,
+                value: `Rs.${(mockData.monthlyOverview.salariesPaid / 1000).toFixed(1)}k`,
                 icon: UsersIcon,
                 color: "from-purple-500 to-pink-600"
               },

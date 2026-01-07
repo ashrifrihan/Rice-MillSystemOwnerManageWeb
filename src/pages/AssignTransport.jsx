@@ -24,12 +24,27 @@ import {
   ShoppingCart,
   Building,
   Box,
-  Loader
+  Loader,
+  AlertTriangle
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue, set, update, get, push, remove } from 'firebase/database';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
+import PopupAlert from '../components/ui/PopupAlert';
+import { 
+  validateTripAssignment, 
+  validateGPSCoordinates,
+  classifyNetworkError 
+} from '../utils/tripValidation';
 
 export function AssignTransport() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   const [formData, setFormData] = useState({
     vehicle: '',
     driver: '',
@@ -45,260 +60,242 @@ export function AssignTransport() {
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [recommendedMatches, setRecommendedMatches] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [vehicles, setVehicles] = useState([]);
+  const [drivers, setDrivers] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [alert, setAlert] = useState({ isOpen: false, type: 'success', title: '', message: '', details: [] });
 
-  // ==================== MOCK DATA: ORDERS NEEDING TRANSPORT ====================
-  const transportOrders = [
-    {
-      id: 'ORD-1023',
-      type: 'delivery',
-      customerName: 'ABC Supermarket',
-      customerId: 'CUST-001',
-      address: '123 Galle Road, Colombo 07',
-      deliveryAddress: '123 Galle Road, Colombo 07',
-      product: 'Samba Rice',
-      quantity: '2000 kg',
-      status: 'Pending Transport',
-      orderDate: '2024-03-15',
-      priority: 'High',
-      value: '₨ 85,000',
-      items: [
-        { name: 'Samba Rice', quantity: '1000 kg', price: '₨ 42,500' },
-        { name: 'Basmati Rice', quantity: '1000 kg', price: '₨ 42,500' }
-      ]
-    },
-    {
-      id: 'ORD-1024',
-      type: 'delivery',
-      customerName: 'Green Grocers Ltd',
-      customerId: 'CUST-002',
-      address: '456 Kandy Road, Kurunegala',
-      deliveryAddress: '456 Kandy Road, Kurunegala',
-      product: 'Red Rice & Lentils',
-      quantity: '3500 kg',
-      status: 'Pending Transport',
-      orderDate: '2024-03-14',
-      priority: 'Medium',
-      value: '₨ 120,000',
-      items: [
-        { name: 'Red Rice', quantity: '2000 kg', price: '₨ 70,000' },
-        { name: 'Lentils', quantity: '1500 kg', price: '₨ 50,000' }
-      ]
-    },
-    {
-      id: 'ORD-1025',
-      type: 'pickup',
-      supplierName: 'Farm Fresh Suppliers',
-      supplierId: 'SUPP-001',
-      address: 'Matale Farm Road, Matale',
-      pickupAddress: 'Matale Farm Road, Matale',
-      product: 'Organic Paddy',
-      quantity: '5000 kg',
-      status: 'Pending Transport',
-      orderDate: '2024-03-16',
-      priority: 'High',
-      value: '₨ 175,000',
-      items: [
-        { name: 'Organic Paddy', quantity: '5000 kg', price: '₨ 175,000' }
-      ]
-    },
-    {
-      id: 'ORD-1026',
-      type: 'delivery',
-      customerName: 'City Restaurant Chain',
-      customerId: 'CUST-003',
-      address: '789 Marine Drive, Galle',
-      deliveryAddress: '789 Marine Drive, Galle',
-      product: 'Various Rice Types',
-      quantity: '1500 kg',
-      status: 'Pending Transport',
-      orderDate: '2024-03-16',
-      priority: 'Low',
-      value: '₨ 65,000',
-      items: [
-        { name: 'White Rice', quantity: '800 kg', price: '₨ 28,000' },
-        { name: 'Brown Rice', quantity: '700 kg', price: '₨ 37,000' }
-      ]
-    },
-    {
-      id: 'ORD-1027',
-      type: 'pickup',
-      supplierName: 'Rice Mill Corp',
-      supplierId: 'SUPP-002',
-      address: 'Mill Complex, Polonnaruwa',
-      pickupAddress: 'Mill Complex, Polonnaruwa',
-      product: 'Milled Rice',
-      quantity: '8000 kg',
-      status: 'Pending Transport',
-      orderDate: '2024-03-15',
-      priority: 'Medium',
-      value: '₨ 280,000',
-      items: [
-        { name: 'Milled Rice', quantity: '8000 kg', price: '₨ 280,000' }
-      ]
+  const seedVehicles = () => {
+    const fallbackOwner = userEmail || 'owner@colombomill.lk';
+    const seeds = {
+      'veh-1': {
+        owner_email: fallbackOwner,
+        vehicleNumber: 'CAB-7890',
+        type: 'Truck',
+        capacity: '5000 kg',
+        fuelType: 'Diesel',
+        status: 'Active',
+        insuranceStatus: 'valid',
+        insuranceExpiry: new Date(Date.now() + 1000*60*60*24*180).toISOString(),
+        trackerId: 'TRK-001',
+        currentLocation: 'Main Warehouse',
+        vehicleImage: 'https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80'
+      },
+      'veh-2': {
+        owner_email: fallbackOwner,
+        vehicleNumber: 'CP-4567',
+        type: 'Pickup Truck',
+        capacity: '2000 kg',
+        fuelType: 'Diesel',
+        status: 'Active',
+        insuranceStatus: 'valid',
+        insuranceExpiry: new Date(Date.now() + 1000*60*60*24*120).toISOString(),
+        trackerId: 'TRK-002',
+        currentLocation: 'Yard A',
+        vehicleImage: 'https://images.unsplash.com/photo-1502877828070-33b167ad6860?auto=format&fit=crop&w=800&q=80'
+      }
+    };
+    return Object.keys(seeds).map(key => ({ id: key, ...seeds[key], isAvailable: true }));
+  };
+
+  const seedDrivers = () => {
+    const fallbackOwner = userEmail || 'owner@colombomill.lk';
+    const seeds = {
+      'drv-1': {
+        owner_email: fallbackOwner,
+        name: 'Nimal Perera',
+        phone: '+94 76 234 5678',
+        role: 'Driver',
+        status: 'active',
+        experience: '5 years',
+        rating: '4.8',
+        lastActive: '2 min ago',
+        tripsCompleted: 124,
+        profileImage: 'https://api.dicebear.com/7.x/avataaars/svg?seed=nimal',
+        licenseNumber: 'LIC-001',
+        currentLocation: 'Main Warehouse',
+        preferredVehicleTypes: ['Truck', 'Lorry']
+      },
+      'drv-2': {
+        owner_email: fallbackOwner,
+        name: 'Sunil Bandara',
+        phone: '+94 71 345 6789',
+        role: 'Driver',
+        status: 'active',
+        experience: '3 years',
+        rating: '4.6',
+        lastActive: '5 min ago',
+        tripsCompleted: 89,
+        profileImage: 'https://api.dicebear.com/7.x/avataaars/svg?seed=sunil',
+        licenseNumber: 'LIC-002',
+        currentLocation: 'Yard A',
+        preferredVehicleTypes: ['Pickup Truck', 'Van']
+      }
+    };
+    return Object.keys(seeds).map(key => ({ id: key, ...seeds[key], status: 'Available', isAvailable: true }));
+  };
+
+  // Firebase Listeners
+  useEffect(() => {
+    if (!userEmail) return;
+    setLoading(true);
+    
+    // Load vehicles
+    const vehiclesRef = ref(db, 'vehicles');
+    const unsubscribeVehicles = onValue(vehiclesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const rawList = Object.entries(snapshot.val() || {}).map(([id, val]) => ({ id, ...val }));
+        const scoped = filterSnapshotByOwner(snapshot, userEmail);
+        const source = scoped.length > 0 ? scoped : rawList; // fallback if records lack owner_email
+
+        const vehiclesList = source.map(item => {
+          const status = (item.status || '').toLowerCase();
+          const busy = Boolean(item.currentTripId);
+          const availableFlag = item.isAvailable;
+          return {
+            id: item.id,
+            ...item,
+            isAvailable: availableFlag !== undefined ? availableFlag : (!busy && (status ? status === 'active' : true))
+          };
+        });
+        setVehicles(vehiclesList);
+      } else {
+        const vehiclesList = seedVehicles();
+        setVehicles(vehiclesList);
+        try { set(workersRef, Object.fromEntries(vehiclesList.map(v => [v.id, v]))); } catch (e) { /* ignore permission errors */ }
+      }
+    }, (error) => {
+      console.error('Firebase vehicles error:', error);
+      toast.error('Failed to load vehicles');
+      setVehicles(seedVehicles());
+    });
+
+    // Load drivers from workers node
+    const workersRef = ref(db, 'workers');
+    const unsubscribeDrivers = onValue(workersRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const rawList = Object.entries(snapshot.val() || {}).map(([id, val]) => ({ id, ...val }));
+        const scoped = filterSnapshotByOwner(snapshot, userEmail);
+        const source = scoped.length > 0 ? scoped : rawList; // fallback if records lack owner_email
+
+        const driversList = source
+          .filter(item => (item.role || '').toLowerCase() === 'driver')
+          .map(item => {
+            const busy = Boolean(item.currentTripId);
+            const availableFlag = item.isAvailable;
+            const status = busy ? 'Busy' : 'Available';
+            return {
+              id: item.id,
+              name: item.name,
+              phone: item.phone,
+              status,
+              experience: item.experience || '0 years',
+              rating: item.rating || '0.0',
+              lastActive: item.lastActive || 'N/A',
+              tripsCompleted: item.tripsCompleted || 0,
+              driverImage: item.profileImage || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop',
+              licenseNumber: item.licenseNumber || 'N/A',
+              currentLocation: item.currentLocation || 'Unknown',
+              isAvailable: availableFlag !== undefined ? availableFlag : !busy,
+              preferredVehicleTypes: item.preferredVehicleTypes || ['Lorry', 'Mini Lorry'],
+              assignedVehicleId: item.assignedVehicleId || null,
+              assignedVehicleNumber: item.assignedVehicleNumber || null
+            };
+          });
+        setDrivers(driversList);
+      } else {
+        const driversList = seedDrivers();
+        setDrivers(driversList);
+        try { set(workersRef, Object.fromEntries(driversList.map(d => [d.id, d]))); } catch (e) { /* ignore permission errors */ }
+      }
+    }, (error) => {
+      console.error('Firebase drivers error:', error);
+      toast.error('Failed to load drivers');
+      setDrivers(seedDrivers());
+    });
+
+    // Load orders (pending transport)
+    const ordersRef = ref(db, 'orders');
+    const unsubscribeOrders = onValue(ordersRef, (snapshot) => {
+      const ordersList = filterSnapshotByOwner(snapshot, userEmail)
+        .filter(item => item.status === 'Pending Transport' || item.status === 'Confirmed' || item.status === 'approved' || item.status === 'pending');
+      console.log('AssignTransport loaded orders:', ordersList.map(o => ({ 
+        id: o.id, 
+        status: o.status,
+        deliveryAddress: o.deliveryAddress, 
+        dealerAddress: o.dealerAddress, 
+        address: o.address 
+      })));
+      setOrders(ordersList);
+      setLoading(false);
+    }, (error) => {
+      console.error('Firebase orders error:', error);
+      toast.error('Failed to load orders');
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribeVehicles();
+      unsubscribeDrivers();
+      unsubscribeOrders();
+    };
+  }, [userEmail]);
+
+  // Preselect order when navigated from Orders with state (bulletproof)
+  useEffect(() => {
+    if (!location.state) return;
+
+    const { orderId, order } = location.state;
+    console.log('AssignTransport navigation state:', { orderId, order });
+    console.log('Order address fields:', {
+      deliveryAddress: order?.deliveryAddress,
+      dealerAddress: order?.dealerAddress,
+      address: order?.address
+    });
+
+    if (order) {
+      setSelectedOrder(order);
+      setFormData(prev => ({
+        ...prev,
+        tripType: order.type || 'delivery',
+        endLocation: order.deliveryAddress || order.pickupAddress || ''
+      }));
+      return;
     }
-  ];
+
+    if (orderId && orders.length > 0) {
+      const found = orders.find(o => o.id === orderId);
+      console.log('Found order from Firebase:', found);
+      console.log('Found order address fields:', {
+        deliveryAddress: found?.deliveryAddress,
+        dealerAddress: found?.dealerAddress,
+        address: found?.address
+      });
+      if (found) {
+        setSelectedOrder(found);
+        setFormData(prev => ({
+          ...prev,
+          tripType: found.type || 'delivery',
+          endLocation: found.deliveryAddress || found.pickupAddress || ''
+        }));
+      }
+    }
+  }, [location.state, orders]);
 
   // Filter orders based on trip type
   const getFilteredOrders = () => {
-    return transportOrders.filter(order => 
-      order.type === formData.tripType && order.status === 'Pending Transport'
+    return orders.filter(order => 
+      (order.type || 'delivery') === formData.tripType && 
+      (order.status === 'Pending Transport' || order.status === 'Confirmed' || order.status === 'approved')
     );
   };
 
-  // ==================== MOCK DATA: VEHICLES ====================
-  const availableVehicles = [
-    {
-      id: 'V001',
-      vehicleNumber: 'WP CAB 1234',
-      type: 'Lorry',
-      capacity: '5000 kg',
-      fuelType: 'Diesel',
-      insuranceExpiry: '2024-06-30',
-      insuranceStatus: 'valid',
-      status: 'Active',
-      vehicleImage: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=400&h=300&fit=crop',
-      currentLocation: 'Warehouse Yard',
-      mileage: '8.5 km/l',
-      trackerId: 'GPS-001',
-      chassisNumber: 'TATA1612X1234567',
-      isAvailable: true
-    },
-    {
-      id: 'V002',
-      vehicleNumber: 'WP KA 5678',
-      type: 'Mini Lorry',
-      capacity: '2000 kg',
-      fuelType: 'Petrol',
-      insuranceExpiry: '2024-05-15',
-      insuranceStatus: 'expiring',
-      status: 'Active',
-      vehicleImage: 'https://images.unsplash.com/photo-1557229057-f1342e5829d2?w=400&h=300&fit=crop',
-      currentLocation: 'Main Yard',
-      mileage: '12 km/l',
-      trackerId: 'GPS-002',
-      chassisNumber: 'TOYOHLX12345678',
-      isAvailable: true
-    },
-    {
-      id: 'V003',
-      vehicleNumber: 'NP AB 9012',
-      type: 'Three-wheel',
-      capacity: '500 kg',
-      fuelType: 'Petrol',
-      insuranceExpiry: '2024-07-31',
-      insuranceStatus: 'valid',
-      status: 'Active',
-      vehicleImage: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=300&fit=crop',
-      currentLocation: 'Service Center',
-      mileage: '6.5 km/l',
-      trackerId: 'GPS-003',
-      chassisNumber: 'ASHLEY1234567',
-      isAvailable: true
-    },
-    {
-      id: 'V004',
-      vehicleNumber: 'CP XY 7890',
-      type: 'Container Truck',
-      capacity: '10000 kg',
-      fuelType: 'Diesel',
-      insuranceExpiry: '2024-09-30',
-      insuranceStatus: 'valid',
-      status: 'Active',
-      vehicleImage: 'https://images.unsplash.com/photo-1557844352-761f16da8c67?w=400&h=300&fit=crop',
-      currentLocation: 'Storage Yard',
-      mileage: '5.5 km/l',
-      trackerId: 'GPS-004',
-      chassisNumber: 'MERCEDES789012',
-      isAvailable: true
-    }
-  ];
+  // Available vehicles loaded from Firebase
 
-  // ==================== MOCK DATA: DRIVERS ====================
-  const availableDrivers = [
-    {
-      id: 'D001',
-      name: 'Rajesh Kumar',
-      phone: '077-1234567',
-      status: 'Available',
-      experience: '5 years',
-      rating: '4.8',
-      lastActive: '2 hours ago',
-      tripsCompleted: 156,
-      driverImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=400&fit=crop',
-      licenseNumber: 'LK-D-123456',
-      isAvailable: true,
-      preferredVehicleTypes: ['Lorry', 'Container Truck']
-    },
-    {
-      id: 'D002',
-      name: 'Suresh Patel',
-      phone: '077-2345678',
-      status: 'Available',
-      experience: '3 years',
-      rating: '4.5',
-      lastActive: '30 minutes ago',
-      tripsCompleted: 89,
-      driverImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=400&fit=crop',
-      licenseNumber: 'LK-D-234567',
-      currentLocation: 'Kandy',
-      assignedVehicleId: null,
-      assignedVehicleNumber: null,
-      isAvailable: true,
-      preferredVehicleTypes: ['Mini Lorry', 'Three-wheel']
-    },
-    {
-      id: 'D003',
-      name: 'Kamal Perera',
-      phone: '077-3456789',
-      status: 'Available',
-      experience: '2 years',
-      rating: '4.3',
-      lastActive: '1 hour ago',
-      tripsCompleted: 45,
-      driverImage: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=400&fit=crop',
-      licenseNumber: 'LK-D-345678',
-      currentLocation: 'Galle',
-      isAvailable: true,
-      preferredVehicleTypes: ['Three-wheel', 'Mini Lorry']
-    },
-    {
-      id: 'D004',
-      name: 'Anil Fernando',
-      phone: '077-4567890',
-      status: 'Busy',
-      experience: '7 years',
-      rating: '4.9',
-      lastActive: 'Just now',
-      tripsCompleted: 234,
-      driverImage: 'https://images.unsplash.com/photo-1507591064344-4c6ce005-128?w=400&h=400&fit=crop',
-      licenseNumber: 'LK-D-456789',
-      currentLocation: 'Colombo',
-      assignedVehicleId: null,
-      assignedVehicleNumber: null,
-      isAvailable: false,
-      preferredVehicleTypes: ['Lorry', 'Container Truck']
-    },
-    {
-      id: 'D005',
-      name: 'Ravi Silva',
-      phone: '077-5678901',
-      status: 'Available',
-      experience: '4 years',
-      rating: '4.6',
-      lastActive: '45 minutes ago',
-      tripsCompleted: 112,
-      driverImage: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=400&h=400&fit=crop',
-      licenseNumber: 'LK-D-567890',
-      currentLocation: 'Negombo',
-      assignedVehicleId: null,
-      assignedVehicleNumber: null,
-      isAvailable: true,
-      preferredVehicleTypes: ['Container Truck', 'Lorry']
-    }
-  ];
+  // Available drivers loaded from Firebase workers
 
   // Auto-set scheduled time to next hour
   useEffect(() => {
@@ -328,7 +325,7 @@ export function AssignTransport() {
       const address = formData.tripType === 'delivery' 
         ? selectedOrder.deliveryAddress 
         : selectedOrder.pickupAddress;
-      setFormData(prev => ({ ...prev, endLocation: address }));
+      setFormData(prev => ({ ...prev, endLocation: address || '' }));
     }
   }, [selectedOrder, formData.tripType]);
 
@@ -339,7 +336,7 @@ export function AssignTransport() {
       
       // Find if driver is assigned to selected vehicle
       if (selectedVehicle) {
-        const assignedDriver = availableDrivers.find(d => 
+        const assignedDriver = drivers.find(d => 
           d.assignedVehicleId === selectedVehicle.id && d.isAvailable
         );
         if (assignedDriver) {
@@ -353,7 +350,7 @@ export function AssignTransport() {
       
       // Find if vehicle is assigned to selected driver
       if (selectedDriver && selectedDriver.assignedVehicleId) {
-        const assignedVehicle = availableVehicles.find(v => 
+        const assignedVehicle = vehicles.find(v => 
           v.id === selectedDriver.assignedVehicleId && v.isAvailable
         );
         if (assignedVehicle) {
@@ -367,9 +364,9 @@ export function AssignTransport() {
       
       // Recommend drivers based on vehicle type preferences
       if (selectedVehicle && !selectedDriver) {
-        const compatibleDrivers = availableDrivers
+        const compatibleDrivers = drivers
           .filter(d => d.isAvailable && d.id !== formData.driver)
-          .filter(d => d.preferredVehicleTypes.includes(selectedVehicle.type))
+          .filter(d => d.preferredVehicleTypes?.includes(selectedVehicle.type))
           .slice(0, 2);
         
         compatibleDrivers.forEach(driver => {
@@ -383,9 +380,9 @@ export function AssignTransport() {
       
       // Recommend vehicles based on driver preferences
       if (selectedDriver && !selectedVehicle) {
-        const compatibleVehicles = availableVehicles
+        const compatibleVehicles = vehicles
           .filter(v => v.isAvailable && v.id !== formData.vehicle)
-          .filter(v => selectedDriver.preferredVehicleTypes.includes(v.type))
+          .filter(v => selectedDriver.preferredVehicleTypes?.includes(v.type))
           .slice(0, 2);
         
         compatibleVehicles.forEach(vehicle => {
@@ -399,9 +396,9 @@ export function AssignTransport() {
       
       // If nothing is selected, show top recommendations
       if (!selectedVehicle && !selectedDriver) {
-        const topDrivers = availableDrivers
+        const topDrivers = drivers
           .filter(d => d.isAvailable)
-          .sort((a, b) => b.rating - a.rating)
+          .sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating))
           .slice(0, 2);
         
         topDrivers.forEach(driver => {
@@ -412,7 +409,7 @@ export function AssignTransport() {
           });
         });
         
-        const availableVehiclesList = availableVehicles
+        const availableVehiclesList = vehicles
           .filter(v => v.isAvailable)
           .slice(0, 1);
         
@@ -433,20 +430,20 @@ export function AssignTransport() {
 
   // Handle order selection
   const handleOrderSelect = (orderId) => {
-    const order = transportOrders.find(o => o.id === orderId);
+    const order = orders.find(o => o.id === orderId);
     setSelectedOrder(order);
   };
 
   // Handle vehicle selection
   const handleVehicleSelect = (vehicleId) => {
-    const vehicle = availableVehicles.find(v => v.id === vehicleId);
+    const vehicle = vehicles.find(v => v.id === vehicleId);
     setSelectedVehicle(vehicle);
     setFormData(prev => ({ ...prev, vehicle: vehicleId }));
   };
 
   // Handle driver selection
   const handleDriverSelect = (driverId) => {
-    const driver = availableDrivers.find(d => d.id === driverId);
+    const driver = drivers.find(d => d.id === driverId);
     if (!driver) return;
     
     setSelectedDriver(driver);
@@ -457,96 +454,256 @@ export function AssignTransport() {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!selectedOrder) {
-      alert('Please select an order first!');
+      setAlert({
+        isOpen: true,
+        type: 'error',
+        title: 'Order Required',
+        message: 'Select an order before assigning transport.',
+        details: []
+      });
       return;
     }
     setShowConfirmModal(true);
   };
 
-  // Handle confirm assignment - FIXED: Now creates Trip object
+  // Handle confirm assignment - IMPROVED: Now includes validation & error handling
   const handleConfirmAssignment = async () => {
+    console.log('🚀 Starting transport assignment...');
+    console.log('Selected data:', {
+      order: selectedOrder?.id,
+      vehicle: selectedVehicle?.id,
+      driver: selectedDriver?.id,
+      endLocation: formData.endLocation
+    });
+    
     setIsLoading(true);
     
     try {
+      // ==================== VALIDATION ====================
+      console.log('🔍 Starting validation...');
+      // Fetch active trips to check for conflicts
+      const tripsSnapshot = await get(ref(db, 'trips'));
+      const activeTrips = tripsSnapshot.exists() 
+        ? Object.values(tripsSnapshot.val()).filter(t => 
+            ['in-transit', 'scheduled', 'assigned'].includes(t.status)
+          )
+        : [];
+      console.log('📊 Active trips found:', activeTrips.length);
+      console.log('👤 Selected driver availability:', {
+        id: selectedDriver.id,
+        name: selectedDriver.name,
+        isAvailable: selectedDriver.isAvailable,
+        status: selectedDriver.status
+      });
+
+      // Validate all constraints
+      const validation = validateTripAssignment(
+        {
+          orderId: selectedOrder.id,
+          vehicleId: selectedVehicle.id,
+          driverId: selectedDriver.id,
+          endLocation: formData.endLocation
+        },
+        activeTrips,
+        selectedVehicle,
+        selectedOrder,
+        selectedDriver
+      );
+
+      console.log('✅ Validation result:', validation);
+      
+      if (!validation.isValid) {
+        console.log('❌ Validation failed:', validation.errors);
+        setAlert({
+          isOpen: true,
+          type: 'error',
+          title: 'Cannot Assign Transport',
+          message: 'Validation failed:',
+          details: validation.errors
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Show warnings if any
+      if (validation.warnings.length > 0) {
+        console.warn('⚠️ Assignment Warnings:', validation.warnings);
+      }
+
       // ==================== CREATE TRIP OBJECT ====================
-      const tripId = `TRP-${Math.floor(1000 + Math.random() * 9000)}`;
+      console.log('🏗️ Creating trip object...');
+      // IMPORTANT: tripId must be the Firebase push() key for system alignment
+      // This ensures trips/{tripId} === liveLocations/{tripId}
+      const tripRef = push(ref(db, 'trips'));
+      const tripId = tripRef.key; // Use Firebase-generated key as single source of truth
+      console.log('🆔 Generated tripId:', tripId);
+      
       const tripData = {
         tripId,
         orderId: selectedOrder.id,
         orderType: selectedOrder.type,
         vehicleId: selectedVehicle.id,
         driverId: selectedDriver.id,
-        vehicleDetails: selectedVehicle,
-        driverDetails: selectedDriver,
+        driverPhone: selectedDriver.phone, 
+        vehicleDetails: {
+          vehicleNumber: selectedVehicle.vehicleNumber,
+          type: selectedVehicle.type,
+          capacity: selectedVehicle.capacity
+        },
+        driverDetails: {
+          name: selectedDriver.name,
+          phone: selectedDriver.phone,
+          rating: selectedDriver.rating
+        },
         orderDetails: selectedOrder,
         startLocation: formData.startLocation,
         endLocation: formData.endLocation,
         scheduledTime: formData.scheduledTime,
         tripType: formData.tripType,
-        status: 'In Transit',
+        status: 'assigned',
         progress: 0,
         currentLocation: formData.startLocation,
         gpsTracking: true,
         startedAt: new Date().toISOString(),
         notes: formData.notes,
-        // For GPS and progress tracking
         estimatedDistance: '75 km',
         estimatedDuration: '2.5 hours',
         waypoints: [],
-        // For UI tracking
         timeline: [
           {
             status: 'Assigned',
             timestamp: new Date().toISOString(),
             description: 'Transport assigned to vehicle and driver'
           }
-        ]
+        ],
+        owner_email: userEmail
       };
 
-      // ==================== UPDATE ORDER STATUS ====================
-      const updatedOrder = {
-        ...selectedOrder,
+      // ==================== SAVE TO FIREBASE ====================
+      console.log('💾 Saving to Firebase...');
+      // 1. Create trip record using pre-generated key for alignment
+      console.log('📝 Creating trip record...');
+      await set(tripRef, tripData);
+      console.log('✅ Trip record created successfully');
+
+      // INIT LIVE GPS NODE (IMPORTANT)
+      console.log('📍 Initializing GPS tracking...');
+      const gpsCoordValidation = validateGPSCoordinates(6.9271, 79.8612);
+      if (!gpsCoordValidation.isValid) {
+        console.warn('⚠️ GPS Validation:', gpsCoordValidation.error);
+      }
+
+      await set(ref(db, `liveLocations/${tripId}`), {
+        tripId,
+        driverId: selectedDriver.id,
+        vehicleId: selectedVehicle.id,
+        lat: 6.9271,
+        lng: 79.8612,
+        speed: 0,
+        heading: 0,
+        lastUpdated: new Date().toISOString(),
+        status: 'active',
+        updatedAt: Date.now()
+      });
+      console.log('✅ GPS tracking initialized');
+
+      // 2. Update order status
+      console.log('📦 Updating order status...');
+      await update(ref(db, `orders/${selectedOrder.id}`), {
         status: 'In Transit',
         assignedVehicle: selectedVehicle.vehicleNumber,
         assignedDriver: selectedDriver.name,
         tripId,
         assignedAt: new Date().toISOString()
-      };
+      });
+      console.log('✅ Order status updated');
 
-      // ==================== UPDATE VEHICLE & DRIVER STATUS ====================
-      const updatedVehicle = {
-        ...selectedVehicle,
+      // 3. Update vehicle status
+      console.log('🚛 Updating vehicle status...');
+      await update(ref(db, `vehicles/${selectedVehicle.id}`), {
         status: 'On Trip',
         currentTripId: tripId,
-        isAvailable: false
-      };
+        isAvailable: false,
+        updatedAt: new Date().toISOString()
+      });
+      console.log('✅ Vehicle status updated');
 
-      const updatedDriver = {
-        ...selectedDriver,
-        status: 'Busy',
+      // 4. Update driver status (in workers node)
+      console.log('👤 Updating driver status...');
+      await update(ref(db, `workers/${selectedDriver.id}`), {
         currentTripId: tripId,
-        isAvailable: false
+        isAvailable: false,
+        status: 'on-trip',
+        updatedAt: new Date().toISOString()
+      });
+      console.log('✅ Driver status updated');
+
+      // 5. QUEUE SMS NOTIFICATION (Backend will handle actual sending)
+      console.log('📱 Queuing SMS notification...');
+      const smsData = {
+        to: selectedDriver.phone,
+        message: `🚚 New Trip Assigned!
+Trip ID: ${tripId}
+Vehicle: ${selectedVehicle.vehicleNumber}
+From: ${formData.startLocation}
+To: ${formData.endLocation}
+Time: ${formData.scheduledTime ? formatDateTime(formData.scheduledTime) : 'Immediately'}
+Order: ${selectedOrder.id}
+
+Check your dashboard for full details.`,
+        tripId,
+        driverId: selectedDriver.id,
+        driverName: selectedDriver.name,
+        driverPhone: selectedDriver.phone,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        type: 'trip_assigned'
       };
+      console.log('📤 SMS Data:', smsData);
 
-      console.log('🚀 CREATING TRIP:', tripData);
-      console.log('📦 UPDATING ORDER:', updatedOrder);
-      console.log('🚚 UPDATING VEHICLE:', updatedVehicle);
-      console.log('👤 UPDATING DRIVER:', updatedDriver);
+      await push(ref(db, 'notifications/sms_queue'), smsData);
+      console.log('✅ SMS notification queued');
 
-      // In real app, you would make API calls here:
-      // 1. POST /trips - Create trip record
-      // 2. PUT /orders/{orderId} - Update order status
-      // 3. PUT /vehicles/{vehicleId} - Update vehicle status
-      // 4. PUT /drivers/{driverId} - Update driver status
+      // Update trip status to 'in-transit' for mobile app visibility
+      console.log('🔄 Updating trip status to in-transit...');
+      await update(ref(db, `trips/${tripId}`), {
+        status: 'in-transit',
+        startedAt: new Date().toISOString()
+      });
+      console.log('✅ Trip status updated to in-transit');
 
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      console.log('🎉 Transport assignment completed successfully!');
+      console.log('📊 Summary:', {
+        tripId,
+        orderId: selectedOrder.id,
+        driverId: selectedDriver.id,
+        vehicleId: selectedVehicle.id,
+        driverPhone: selectedDriver.phone
+      });
 
       setShowConfirmModal(false);
-      setShowSuccessPopup(true);
+      setAlert({
+        isOpen: true,
+        type: 'success',
+        title: 'Transport Assigned Successfully',
+        message: `Trip ${tripId} created and notifications sent to driver.`,
+        details: [
+          `Trip ID: ${tripId}`,
+          `Vehicle: ${selectedVehicle.vehicleNumber}`,
+          `Driver: ${selectedDriver.name}`,
+          `Order: ${selectedOrder.id}`
+        ]
+      });
+
+      // Go to GPS tracking for this trip after 2 seconds
+      setTimeout(() => {
+        console.log('🧭 Navigating to GPS tracking page...');
+        navigate('/transport-gps', { state: { tripId } });
+      }, 2000);
       
       // Reset form after 3 seconds
       setTimeout(() => {
+        console.log('🔄 Resetting form...');
         setFormData({
           vehicle: '',
           driver: '',
@@ -560,14 +717,33 @@ export function AssignTransport() {
         setSelectedOrder(null);
         setSelectedVehicle(null);
         setSelectedDriver(null);
-        setShowSuccessPopup(false);
         setIsLoading(false);
+        console.log('✅ Form reset complete');
       }, 3000);
 
     } catch (error) {
-      console.error('Error assigning transport:', error);
+      console.error('❌ Error assigning transport:', error);
+      console.error('🔍 Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+
+      const errorClassification = classifyNetworkError(error);
+      console.log('📋 Error classification:', errorClassification);
+      
+      setAlert({
+        isOpen: true,
+        type: 'error',
+        title: `Assignment Failed (${errorClassification.type})`,
+        message: errorClassification.message,
+        details: [
+          errorClassification.suggestion,
+          `Technical: ${error.message || 'Unknown error'}`
+        ]
+      });
       setIsLoading(false);
-      alert('Failed to assign transport. Please try again.');
+      console.log('🚨 Error handling complete, loading state reset');
     }
   };
 
@@ -598,44 +774,38 @@ export function AssignTransport() {
 
   // Get filtered drivers for dropdown (only available)
   const getAvailableDrivers = () => {
-    return availableDrivers.filter(driver => driver.isAvailable);
+    return drivers.filter(driver => driver.isAvailable !== false);
   };
 
   // Get filtered vehicles for dropdown (only available)
   const getAvailableVehicles = () => {
-    return availableVehicles.filter(vehicle => vehicle.isAvailable);
+    return vehicles.filter(vehicle => vehicle.isAvailable !== false);
   };
 
   // Get assigned driver for a vehicle
   const getAssignedDriverForVehicle = (vehicleId) => {
-    return availableDrivers.find(driver => 
+    return drivers.find(driver => 
       driver.assignedVehicleId === vehicleId && driver.isAvailable
     );
   };
 
   // Get assigned vehicle for a driver
   const getAssignedVehicleForDriver = (driverId) => {
-    const driver = availableDrivers.find(d => d.id === driverId);
+    const driver = drivers.find(d => d.id === driverId);
     if (driver && driver.assignedVehicleId) {
-      return availableVehicles.find(v => v.id === driver.assignedVehicleId && v.isAvailable);
+      return vehicles.find(v => v.id === driver.assignedVehicleId && v.isAvailable);
     }
     return null;
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 p-4 md:p-6">
-      {/* Success Popup */}
-      {showSuccessPopup && (
-        <div className="fixed top-4 right-4 z-50 animate-slide-in">
-          <div className="bg-emerald-500 text-white px-6 py-4 rounded-xl shadow-lg flex items-center gap-3">
-            <CheckCircle className="w-6 h-6" />
-            <div>
-              <div className="font-semibold">Transport Assigned Successfully!</div>
-              <div className="text-sm">
-                Trip {`TRP-${Math.floor(1000 + Math.random() * 9000)}`} created. 
-                Order is now "In Transit".
-              </div>
-            </div>
+      {/* Loading State */}
+      {loading && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 shadow-xl flex items-center gap-3">
+            <Loader className="w-6 h-6 animate-spin text-blue-600" />
+            <span className="text-gray-900 font-medium">Loading transport data...</span>
           </div>
         </div>
       )}
@@ -672,7 +842,7 @@ export function AssignTransport() {
                 View History
               </button>
               <button
-                onClick={() => navigate('/transport/live')}
+                onClick={() => navigate('/transport-gps')}
                 className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-medium hover:shadow-lg transition"
               >
                 Live Map
@@ -766,7 +936,7 @@ export function AssignTransport() {
                     <option value="">Choose an order to transport</option>
                     {getFilteredOrders().map(order => (
                       <option key={order.id} value={order.id}>
-                        {order.id} | {order.type === 'delivery' ? order.customerName : order.supplierName} | {order.quantity} | {order.address}
+                        {order.id} | {(order.type === 'delivery' ? (order.customerName || order.dealerName) : order.supplierName) || 'Unknown'} | {(order.quantity || order.items?.length || 0)} | {order.deliveryAddress || order.pickupAddress || order.address || order.dealerAddress || 'No address'}
                       </option>
                     ))}
                   </select>
@@ -799,8 +969,8 @@ export function AssignTransport() {
                               </div>
                               <div className="text-sm text-gray-600">
                                 {selectedOrder.type === 'delivery' 
-                                  ? `Customer: ${selectedOrder.customerName}`
-                                  : `Supplier: ${selectedOrder.supplierName}`
+                                  ? `Customer: ${selectedOrder.customerName || selectedOrder.dealerName || 'Unknown'}`
+                                  : `Supplier: ${selectedOrder.supplierName || 'Unknown'}`
                                 }
                               </div>
                             </div>
@@ -825,8 +995,8 @@ export function AssignTransport() {
                                 <Box className="w-4 h-4 text-gray-400" />
                                 <span className="text-gray-900">{selectedOrder.product}</span>
                               </div>
-                              <div className="text-sm text-gray-600">{selectedOrder.quantity}</div>
-                              <div className="text-sm font-medium text-gray-900">{selectedOrder.value}</div>
+                              <div className="text-sm text-gray-600">{selectedOrder.quantity || selectedOrder.items?.reduce((sum,i)=>sum + (Number(i.quantity)||0),0) || 'N/A'}</div>
+                              <div className="text-sm font-medium text-gray-900">{selectedOrder.value || selectedOrder.totalAmount || ''}</div>
                             </div>
                           </div>
                           
@@ -837,13 +1007,13 @@ export function AssignTransport() {
                                 <MapPin className="w-4 h-4 text-gray-400 mt-0.5" />
                                 <span className="text-gray-900">
                                   {selectedOrder.type === 'delivery' 
-                                    ? selectedOrder.deliveryAddress 
-                                    : selectedOrder.pickupAddress
+                                    ? (selectedOrder.deliveryAddress || selectedOrder.address || selectedOrder.dealerAddress || 'No address')
+                                    : (selectedOrder.pickupAddress || selectedOrder.deliveryAddress || 'No address')
                                   }
                                 </span>
                               </div>
                               <div className="text-gray-600">
-                                Order Date: {new Date(selectedOrder.orderDate).toLocaleDateString('en-IN')}
+                                Order Date: {selectedOrder.orderDate ? new Date(selectedOrder.orderDate).toLocaleDateString('en-IN') : selectedOrder.placedOn ? new Date(selectedOrder.placedOn).toLocaleDateString('en-IN') : 'N/A'}
                               </div>
                             </div>
                           </div>
@@ -851,6 +1021,14 @@ export function AssignTransport() {
                       </div>
                     </div>
                   )}
+                    <PopupAlert
+                      isOpen={alert.isOpen}
+                      type={alert.type}
+                      title={alert.title}
+                      message={alert.message}
+                      details={alert.details}
+                      onClose={() => setAlert(prev => ({ ...prev, isOpen: false }))}
+                    />
                 </div>
 
                 {/* C. Vehicle Selection */}
@@ -877,6 +1055,8 @@ export function AssignTransport() {
                         if (!selectedOrder) return true;
                         const orderQty = parseFloat(selectedOrder.quantity);
                         const vehicleCap = parseFloat(vehicle.capacity);
+                        if (!Number.isFinite(orderQty) || orderQty <= 0) return true; // no numeric qty, show all
+                        if (!Number.isFinite(vehicleCap) || vehicleCap <= 0) return true; // unknown capacity, still show
                         return vehicleCap >= orderQty * 0.8; // Vehicle should have at least 80% of required capacity
                       })
                       .map(vehicle => {
@@ -1302,7 +1482,7 @@ export function AssignTransport() {
                     <span className="text-sm text-gray-700">Orders Pending Transport</span>
                   </div>
                   <span className="font-bold text-gray-900">
-                    {transportOrders.filter(o => o.status === 'Pending Transport').length}
+                    {orders.filter(o => o.status === 'Pending Transport' || o.status === 'Confirmed' || o.status === 'approved').length}
                   </span>
                 </div>
                 
@@ -1314,7 +1494,7 @@ export function AssignTransport() {
                     <span className="text-sm text-gray-700">Active Vehicles</span>
                   </div>
                   <span className="font-bold text-gray-900">
-                    {availableVehicles.filter(v => v.status === 'Active').length}
+                    {vehicles.filter(v => v.status === 'Active' && v.isAvailable).length}
                   </span>
                 </div>
                 
@@ -1326,7 +1506,7 @@ export function AssignTransport() {
                     <span className="text-sm text-gray-700">Available Drivers</span>
                   </div>
                   <span className="font-bold text-gray-900">
-                    {availableDrivers.filter(d => d.status === 'Available').length}
+                    {drivers.filter(d => d.isAvailable).length}
                   </span>
                 </div>
                 

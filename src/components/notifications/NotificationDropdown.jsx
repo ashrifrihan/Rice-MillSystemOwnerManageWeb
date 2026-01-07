@@ -12,7 +12,7 @@ export function NotificationDropdown({ notifications, onClose, markAllAsRead }) 
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <div className="absolute right-0 mt-3 w-[500px] bg-gradient-to-br from-white/90 to-gray-50/90 backdrop-blur-xl rounded-2xl shadow-2xl overflow-hidden z-50 border border-gray-200/50 shadow-2xl">
+    <div className="absolute right-0 mt-3 w-[500px] bg-gradient-to-br from-white/90 to-gray-50/90 backdrop-blur-xl rounded-2xl  overflow-hidden z-50 border border-gray-200/50 shadow-2xl">
       {/* Header */}
       <div className="p-5 border-b border-gray-200/50 bg-gradient-to-r from-gray-50/80 to-white/80 backdrop-blur-sm flex justify-between items-center">
         <div className="flex items-center gap-3">

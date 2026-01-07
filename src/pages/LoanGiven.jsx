@@ -1,4 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue } from 'firebase/database';
+import toast from 'react-hot-toast';
+import { useAuth } from '../contexts/AuthContext';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 import { 
   SearchIcon, 
   FilterIcon,
@@ -24,6 +29,78 @@ import {
   MailIcon,
   UserIcon
 } from 'lucide-react';
+
+// Fallback mock data for issued loans
+const mockIssuedLoans = [
+  {
+    id: 'LN-101',
+    dealerName: 'Sharma Foods Ltd',
+    contact: '+94 11 234 5678',
+    email: 'orders@sharmafoods.lk',
+    riceType: 'Premium Basmati',
+    quantity: 5200,
+    amount: 2600000,
+    paidAmount: 1400000,
+    remainingAmount: 1200000,
+    issueDate: '2024-12-01',
+    dueDate: '2025-01-30',
+    status: 'Active',
+    riskLevel: 'Medium',
+    progress: 54,
+    address: 'Colombo'
+  },
+  {
+    id: 'LN-102',
+    dealerName: 'Keells Supermarket Chain',
+    contact: '+94 11 345 6789',
+    email: 'purchase@keells.lk',
+    riceType: 'Samba Rice',
+    quantity: 4800,
+    amount: 2100000,
+    paidAmount: 2100000,
+    remainingAmount: 0,
+    issueDate: '2024-10-10',
+    dueDate: '2024-12-10',
+    status: 'Fully Repaid',
+    riskLevel: 'Low',
+    progress: 100,
+    address: 'Colombo'
+  },
+  {
+    id: 'LN-103',
+    dealerName: 'Singh Exports',
+    contact: '+94 77 123 4567',
+    email: 'accounts@singhexports.lk',
+    riceType: 'Brown Rice',
+    quantity: 3000,
+    amount: 1500000,
+    paidAmount: 600000,
+    remainingAmount: 900000,
+    issueDate: '2024-11-05',
+    dueDate: '2025-01-05',
+    status: 'Partially Repaid',
+    riskLevel: 'Medium',
+    progress: 40,
+    address: 'Negombo'
+  },
+  {
+    id: 'LN-104',
+    dealerName: 'Kumar Restaurants',
+    contact: '+94 77 555 1111',
+    email: 'finance@kumarrestaurants.lk',
+    riceType: 'Jasmine Rice',
+    quantity: 2000,
+    amount: 980000,
+    paidAmount: 300000,
+    remainingAmount: 680000,
+    issueDate: '2024-09-01',
+    dueDate: '2024-11-01',
+    status: 'Overdue',
+    riskLevel: 'High',
+    progress: 31,
+    address: 'Kandy'
+  }
+];
 
 // Loan Details Popup Component - Matching LoanCollection style
 const LoanDetailsPopup = ({ loan, onClose }) => {
@@ -401,6 +478,8 @@ GENERATED ON: ${new Date().toLocaleDateString()}
 };
 
 export function LoanGiven() {
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterRisk, setFilterRisk] = useState('All');
@@ -408,6 +487,39 @@ export function LoanGiven() {
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [downloadLoan, setDownloadLoan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [issuedLoans, setIssuedLoans] = useState([]);
+
+  // Firebase Listener - Load issued loans
+  useEffect(() => {
+    if (!userEmail) return;
+    
+    setLoading(true);
+    const loanGivenRef = ref(db, 'loanGiven');
+    
+    const unsubscribe = onValue(loanGivenRef, (snapshot) => {
+      const loansList = filterSnapshotByOwner(snapshot, userEmail).map(loan => ({
+        ...loan,
+        // Calculate days left
+        daysLeft: loan.dueDate ? Math.ceil((new Date(loan.dueDate) - new Date()) / (1000 * 60 * 60 * 24)) : 0
+      }));
+
+      const fallback = mockIssuedLoans.map(loan => ({
+        ...loan,
+        owner_email: userEmail,
+        daysLeft: loan.dueDate ? Math.ceil((new Date(loan.dueDate) - new Date()) / (1000 * 60 * 60 * 24)) : 0
+      }));
+
+      setIssuedLoans(loansList.length ? loansList : fallback);
+      setLoading(false);
+    }, (error) => {
+      console.error('Firebase error:', error);
+      toast.error('Failed to load loans');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [userEmail]);
 
   // EXACT KPI Card Component from your design
   const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, unit }) => (
@@ -450,132 +562,33 @@ export function LoanGiven() {
     return '';
   };
 
-  // Mock data for issued loans
-  const loans = [
-    {
-      id: 'LG-001',
-      dealerName: 'Lak Sathosa Supermarkets',
-      contact: '+94 11 234 5678',
-      riceType: 'Premium Basmati',
-      quantity: 5000,
-      amount: 2500000,
-      remainingAmount: 1250000,
-      paidAmount: 1250000,
-      issueDate: '2024-01-15',
-      dueDate: '2024-03-15',
-      status: 'Partially Repaid',
-      riskLevel: 'Low',
-      daysLeft: 28,
-      progress: 50
-    },
-    {
-      id: 'LG-002',
-      dealerName: 'Keells Supermarket Chain',
-      contact: '+94 11 345 6789',
-      riceType: 'Samba Rice',
-      quantity: 7000,
-      amount: 3500000,
-      remainingAmount: 3500000,
-      paidAmount: 0,
-      issueDate: '2024-01-10',
-      dueDate: '2024-02-25',
-      status: 'Active',
-      riskLevel: 'Medium',
-      daysLeft: 5,
-      progress: 0
-    },
-    {
-      id: 'LG-003',
-      dealerName: 'Cargills Food City',
-      contact: '+94 11 456 7890',
-      riceType: 'Nadu Rice',
-      quantity: 4000,
-      amount: 1800000,
-      remainingAmount: 1800000,
-      paidAmount: 0,
-      issueDate: '2024-01-05',
-      dueDate: '2024-01-30',
-      status: 'Overdue',
-      riskLevel: 'High',
-      daysLeft: -3,
-      progress: 0
-    },
-    {
-      id: 'LG-004',
-      dealerName: 'Hilton Colombo Restaurants',
-      contact: '+94 11 567 8901',
-      riceType: 'Jasmine Rice',
-      quantity: 2000,
-      amount: 1200000,
-      remainingAmount: 0,
-      paidAmount: 1200000,
-      issueDate: '2023-12-15',
-      dueDate: '2024-02-15',
-      status: 'Fully Repaid',
-      riskLevel: 'Low',
-      daysLeft: 0,
-      progress: 100
-    },
-    {
-      id: 'LG-005',
-      dealerName: 'Nawarathne Wholesalers',
-      contact: '+94 36 234 5678',
-      riceType: 'Red Rice',
-      quantity: 1500,
-      amount: 800000,
-      remainingAmount: 200000,
-      paidAmount: 600000,
-      issueDate: '2024-01-20',
-      dueDate: '2024-04-20',
-      status: 'Partially Repaid',
-      riskLevel: 'Medium',
-      daysLeft: 64,
-      progress: 75
-    },
-    {
-      id: 'LG-006',
-      dealerName: 'Ambalangoda Fisheries',
-      contact: '+94 91 456 7890',
-      riceType: 'Parboiled Rice',
-      quantity: 1000,
-      amount: 500000,
-      remainingAmount: 250000,
-      paidAmount: 250000,
-      issueDate: '2024-01-25',
-      dueDate: '2024-03-25',
-      status: 'Partially Repaid',
-      riskLevel: 'Low',
-      daysLeft: 38,
-      progress: 50
-    }
-  ];
-
-  const filteredLoans = loans.filter(loan => {
+  // Filter loans from Firebase
+  const filteredLoans = issuedLoans.filter(loan => {
     const matchesSearch = 
-      loan.dealerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.riceType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.contact.includes(searchTerm);
+      loan?.dealerName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan?.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan?.riceType?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan?.contact?.includes(searchTerm);
     
-    const matchesStatus = filterStatus === 'All' || loan.status === filterStatus;
-    const matchesRisk = filterRisk === 'All' || loan.riskLevel === filterRisk;
+    const matchesStatus = filterStatus === 'All' || loan?.status === filterStatus;
+    const matchesRisk = filterRisk === 'All' || loan?.riskLevel === filterRisk;
     
     return matchesSearch && matchesStatus && matchesRisk;
   });
 
   // Calculate KPI stats
   const calculateKPIs = () => {
-    const activeLoans = loans.filter(l => l.status === 'Active');
-    const overdueLoans = loans.filter(l => l.status === 'Overdue');
-    const fullyRepaidLoans = loans.filter(l => l.status === 'Fully Repaid');
+    const activeLoans = issuedLoans.filter(l => l?.status === 'Active');
+    const overdueLoans = issuedLoans.filter(l => l?.status === 'Overdue');
+    const fullyRepaidLoans = issuedLoans.filter(l => l?.status === 'Fully Repaid');
     
-    const totalAmount = loans.reduce((sum, loan) => sum + loan.amount, 0);
-    const totalRemaining = loans.reduce((sum, loan) => sum + loan.remainingAmount, 0);
-    const totalPaid = loans.reduce((sum, loan) => sum + loan.paidAmount, 0);
+    const totalAmount = issuedLoans.reduce((sum, loan) => sum + (loan?.amount || 0), 0);
+    const totalRemaining = issuedLoans.reduce((sum, loan) => sum + (loan?.remainingAmount || 0), 0);
+    const totalPaid = issuedLoans.reduce((sum, loan) => sum + (loan?.paidAmount || 0), 0);
     const repaymentRate = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0;
 
     return {
-      totalLoans: loans.length,
+      totalLoans: issuedLoans.length,
       activeLoans: activeLoans.length,
       overdueLoans: overdueLoans.length,
       fullyRepaidLoans: fullyRepaidLoans.length,

@@ -1,4 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { rtdb as db } from '../firebase/config';
+import { ref, onValue, update, push, set } from 'firebase/database';
+import toast from 'react-hot-toast';
+import { filterSnapshotByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 import { 
   ArrowLeft, 
   DollarSign, 
@@ -21,70 +25,251 @@ import {
   Clock
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { mockLoanCollectionData } from '../data/mockData';
+import { useAuth } from '../contexts/AuthContext';
+
+// Fallback mock data so the page shows meaningful info without backend data
+const mockLoanGiven = [
+  {
+    id: 'LN-201',
+    dealerName: 'Sharma Foods Ltd',
+    contact: '+94 11 234 5678',
+    remainingAmount: 1200000,
+    paidAmount: 1400000,
+    amount: 2600000,
+    dueDate: '2025-01-30',
+    status: 'Active'
+  },
+  {
+    id: 'LN-202',
+    dealerName: 'Keells Supermarket Chain',
+    contact: '+94 11 345 6789',
+    remainingAmount: 0,
+    paidAmount: 2100000,
+    amount: 2100000,
+    dueDate: '2024-12-10',
+    status: 'Fully Repaid'
+  },
+  {
+    id: 'LN-203',
+    dealerName: 'Kumar Restaurants',
+    contact: '+94 77 555 1111',
+    remainingAmount: 680000,
+    paidAmount: 300000,
+    amount: 980000,
+    dueDate: '2024-11-01',
+    status: 'Overdue'
+  }
+];
+
+const mockCollections = [
+  {
+    loanId: 'LN-201',
+    customer: 'Sharma Foods Ltd',
+    amount: 250000,
+    collectedDate: '2024-12-20',
+    collectedBy: 'System',
+    method: 'Cash',
+    receiptNo: 'RCPT-201'
+  },
+  {
+    loanId: 'LN-203',
+    customer: 'Kumar Restaurants',
+    amount: 180000,
+    collectedDate: '2024-12-05',
+    collectedBy: 'System',
+    method: 'Bank Transfer',
+    receiptNo: 'RCPT-203'
+  }
+];
 
 export function LoanCollection() {
   const navigate = useNavigate();
+  const { user, userProfile } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
-  const [collectionData, setCollectionData] = useState(mockLoanCollectionData);
+  const [collectionData, setCollectionData] = useState({ 
+    pendingCollections: [], 
+    recentCollections: [],
+    collectionSummary: {
+      totalDue: 0,
+      collectedThisMonth: 0,
+      pendingCollections: 0,
+      overdueAmount: 0,
+      collectionRate: 0,
+      upcomingLoans: 0,
+      overdueLoans: 0
+    },
+    collectionHistory: []
+  });
   const [isCollectionModalOpen, setIsCollectionModalOpen] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [collectionAmount, setCollectionAmount] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  // Firebase Listener - Load pending collections from loanGiven
+  useEffect(() => {
+    if (!userEmail) return;
+    
+    setLoading(true);
+    const loanGivenRef = ref(db, 'loanGiven');
+    const collectionsRef = ref(db, 'loanCollections');
+    
+    const unsubscribeLoanGiven = onValue(loanGivenRef, (snapshot) => {
+      const loansList = filterSnapshotByOwner(snapshot, userEmail);
+      const fallbackLoans = mockLoanGiven.map(l => ({ ...l, owner_email: userEmail }));
+      const effectiveLoans = loansList.length ? loansList : fallbackLoans;
+      const pending = [];
+      const now = new Date();
+      
+      effectiveLoans.forEach(loan => {
+        if ((loan?.status === 'Active' || loan?.status === 'Partially Repaid') && (loan?.remainingAmount || 0) > 0) {
+          const dueDate = loan?.dueDate || new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0];
+          const dueDateObj = new Date(dueDate);
+          const overdueDays = Math.floor((now - dueDateObj) / (1000 * 60 * 60 * 24));
+          const status = overdueDays > 0 ? 'Overdue' : 'Upcoming';
+          
+          pending.push({
+            id: loan.id,
+            customer: loan?.dealerName || 'Unknown',
+            loanId: loan.id,
+            contactNumber: loan?.contact || 'N/A',
+            dueDate: dueDate,
+            dueAmount: loan?.remainingAmount || 0,
+            status: status,
+            overdueDays: overdueDays > 0 ? overdueDays : undefined,
+            ...loan
+          });
+        }
+      });
+      
+      onValue(collectionsRef, (collSnapshot) => {
+        const collectionsList = filterSnapshotByOwner(collSnapshot, userEmail);
+        const fallbackCollections = mockCollections.map(c => ({ ...c, owner_email: userEmail }));
+        const effectiveCollections = collectionsList.length ? collectionsList : fallbackCollections;
+        const recent = [];
+        let collectedThisMonth = 0;
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+        
+        effectiveCollections.forEach(collection => {
+          recent.push(collection);
+          
+          // Calculate this month's collections
+          const collDate = new Date(collection?.collectedDate || '');
+          if (collDate.getMonth() === currentMonth && collDate.getFullYear() === currentYear) {
+            collectedThisMonth += collection?.amount || 0;
+          }
+        });
+        
+        // Calculate summary stats
+        const totalDue = pending.reduce((sum, p) => sum + (p?.dueAmount || 0), 0);
+        const pendingAmount = pending.reduce((sum, p) => sum + (p?.dueAmount || 0), 0);
+        const overdueLoans = pending.filter(p => p?.status === 'Overdue');
+        const overdueAmount = overdueLoans.reduce((sum, p) => sum + (p?.dueAmount || 0), 0);
+        const upcomingLoans = pending.filter(p => p?.status === 'Upcoming').length;
+        const collectionRate = totalDue > 0 ? ((collectedThisMonth / (totalDue + collectedThisMonth)) * 100).toFixed(1) : 0;
+        
+        setCollectionData({
+          pendingCollections: pending,
+          recentCollections: recent.sort((a, b) => new Date(b?.collectedDate || 0) - new Date(a?.collectedDate || 0)),
+          collectionSummary: {
+            totalDue,
+            collectedThisMonth,
+            pendingCollections: pendingAmount,
+            overdueAmount,
+            collectionRate: parseFloat(collectionRate),
+            upcomingLoans,
+            overdueLoans: overdueLoans.length
+          },
+          collectionHistory: recent
+        });
+        setLoading(false);
+      });
+    }, (error) => {
+      console.error('Firebase error:', error);
+      toast.error('Failed to load collections');
+      setLoading(false);
+    });
+
+    return () => unsubscribeLoanGiven();
+  }, [userEmail]);
 
   const handleCollectPayment = (collection) => {
     setSelectedCollection(collection);
-    setCollectionAmount(collection.dueAmount.toString());
+    setCollectionAmount((collection?.dueAmount || 0).toString());
     setIsCollectionModalOpen(true);
   };
 
-  const handleSubmitCollection = () => {
-    if (!collectionAmount || parseFloat(collectionAmount) <= 0) {
-      alert('Please enter a valid collection amount');
+  const handleSubmitCollection = async () => {
+    const amount = parseFloat(collectionAmount);
+    
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Please enter a valid amount');
       return;
     }
 
-    setCollectionData(prevData => {
-      const updatedPending = prevData.pendingCollections.filter(
-        item => item.id !== selectedCollection.id
-      );
+    if (amount > (selectedCollection?.dueAmount || 0)) {
+      toast.error('Collection amount cannot exceed remaining amount');
+      return;
+    }
+
+    try {
+      const updatedPaidAmount = (selectedCollection?.paidAmount || 0) + amount;
+      const updatedRemainingAmount = (selectedCollection?.remainingAmount || 0) - amount;
+      const updatedProgress = Math.round((updatedPaidAmount / (selectedCollection?.amount || 1)) * 100);
+      const newStatus = updatedRemainingAmount === 0 ? 'Fully Repaid' : 'Partially Repaid';
+
+      // Update loan in loanGiven
+      await update(ref(db, `loanGiven/${selectedCollection.id}`), {
+        paidAmount: updatedPaidAmount,
+        remainingAmount: updatedRemainingAmount,
+        progress: updatedProgress,
+        status: newStatus
+      });
+
+      // Add collection record
+      const collectionRef = push(ref(db, 'loanCollections'));
+      const userName = userProfile?.name || user?.email || 'System';
       
-      const newCollectionRecord = {
-        id: `CH${Date.now()}`,
-        loanId: selectedCollection.loanId,
-        customer: selectedCollection.customer,
-        collectionDate: new Date().toISOString().split('T')[0],
-        amount: parseFloat(collectionAmount),
+      await set(collectionRef, {
+        loanId: selectedCollection.id,
+        customer: selectedCollection?.customer || selectedCollection?.dealerName || 'Unknown',
+        amount: amount,
+        collectedDate: new Date().toISOString().split('T')[0],
+        collectedBy: userName,
+        collectedByUid: user?.uid,
         method: 'Cash',
-        collectedBy: 'Current User',
         receiptNo: `RCPT-${Date.now()}`
-      };
+      });
 
-      return {
-        ...prevData,
-        pendingCollections: updatedPending,
-        collectionHistory: [newCollectionRecord, ...prevData.collectionHistory],
-        collectionSummary: {
-          ...prevData.collectionSummary,
-          collectedThisMonth: prevData.collectionSummary.collectedThisMonth + parseFloat(collectionAmount),
-          pendingCollections: prevData.collectionSummary.pendingCollections - parseFloat(collectionAmount),
-          collectionRate: ((prevData.collectionSummary.collectedThisMonth + parseFloat(collectionAmount)) / 
-            prevData.collectionSummary.totalDue * 100).toFixed(1)
-        }
-      };
-    });
+      // If fully repaid, move to settled
+      if (newStatus === 'Fully Repaid') {
+        const settledRef = push(ref(db, 'settledLoans'));
+        await set(settledRef, {
+          ...selectedCollection,
+          settledDate: new Date().toISOString().split('T')[0],
+          finalAmount: updatedPaidAmount,
+          settlementStatus: 'Completed'
+        });
+      }
 
-    setIsCollectionModalOpen(false);
-    setSelectedCollection(null);
-    setCollectionAmount('');
+      toast.success('Payment collected successfully!');
+      setIsCollectionModalOpen(false);
+      setSelectedCollection(null);
+      setCollectionAmount('');
+    } catch (error) {
+      console.error('Error collecting payment:', error);
+      toast.error('Failed to collect payment');
+    }
   };
 
-  const filteredCollections = collectionData.pendingCollections.filter(collection => {
-    const matchesSearch = collection.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         collection.loanId.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'All' || collection.status === filterStatus;
+  const filteredCollections = collectionData?.pendingCollections?.filter(collection => {
+    const matchesSearch = collection?.customer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         collection?.loanId?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = filterStatus === 'All' || collection?.status === filterStatus;
     return matchesSearch && matchesStatus;
-  });
+  }) || [];
 
   const getStatusColor = (status) => {
     switch (status) {

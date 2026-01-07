@@ -12,7 +12,7 @@ import {
   AlertTriangleIcon,
   ClockIcon,
 } from "lucide-react";
-import { mockLoanData } from "../data/mockData";
+import { mockLoanData } from "../data/loanMockData";
 
 /* -------------------------
    Date helpers (robust)

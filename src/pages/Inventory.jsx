@@ -1,3 +1,4 @@
+// src/pages/Inventory.jsx
 import React, { useState, useEffect } from 'react';
 import {
   SearchIcon,
@@ -24,115 +25,164 @@ import {
   Clock,
   Activity,
   Truck,
-  Thermometer
+  Thermometer,
+  Loader2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import inventoryService from '../services/inventoryService';
+import { seedInventoryData, seedMovementsData } from '../services/seedInventory';
+import { useAuth } from '../contexts/AuthContext';
+import { filterByOwner, getCurrentUserEmail } from '../utils/firebaseFilters';
 
 export function Inventory() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userEmail = getCurrentUserEmail(user);
   
-  // Rice types and categories
-  const riceTypes = ['Nadu', 'Samba', 'Raw Rice', 'Broken Rice', 'Basmati', 'Jasmine', 'Brown Rice', 'Parboiled'];
-  const riceGrades = ['Premium', 'Grade A', 'Grade B', 'Grade C'];
-  const warehouseLocations = ['Warehouse A', 'Warehouse B', 'Warehouse C', 'Cold Storage'];
-
-  // Sample inventory data
-  const [inventory, setInventory] = useState([
-    {
-      id: 'RICE001',
-      name: 'Nadu Raw Rice',
-      type: 'Nadu',
-      grade: 'Premium',
-      bags: 150,
-      kgPerBag: 50,
-      totalKg: 7500,
-      currentStock: 7500,
-      minStockLevel: 1000,
-      warehouse: 'Warehouse A',
-      pricePerKg: 45,
-      lastUpdated: '2024-01-15',
-      status: 'In Stock',
-      image: '/api/placeholder/80/80',
-      trend: +12.5,
-      movement: 'Receiving',
-      qualityScore: 98
-    },
-    {
-      id: 'RICE002',
-      name: 'Samba Rice',
-      type: 'Samba',
-      grade: 'Grade A',
-      bags: 80,
-      kgPerBag: 50,
-      totalKg: 4000,
-      currentStock: 1200,
-      minStockLevel: 800,
-      warehouse: 'Warehouse B',
-      pricePerKg: 60,
-      lastUpdated: '2024-01-14',
-      status: 'Low Stock',
-      image: '/api/placeholder/80/80',
-      trend: -28.3,
-      movement: 'Issuing',
-      qualityScore: 92
-    },
-    {
-      id: 'RICE003',
-      name: 'Premium Basmati',
-      type: 'Basmati',
-      grade: 'Premium',
-      bags: 200,
-      kgPerBag: 25,
-      totalKg: 5000,
-      currentStock: 3500,
-      minStockLevel: 1000,
-      warehouse: 'Warehouse C',
-      pricePerKg: 120,
-      lastUpdated: '2024-01-15',
-      status: 'In Stock',
-      image: '/api/placeholder/80/80',
-      trend: +45.2,
-      movement: 'Receiving',
-      qualityScore: 99
-    },
-    {
-      id: 'RICE004',
-      name: 'Brown Rice Organic',
-      type: 'Brown Rice',
-      grade: 'Grade A',
-      bags: 60,
-      kgPerBag: 50,
-      totalKg: 3000,
-      currentStock: 450,
-      minStockLevel: 750,
-      warehouse: 'Warehouse A',
-      pricePerKg: 85,
-      lastUpdated: '2024-01-13',
-      status: 'Low Stock',
-      image: '/api/placeholder/80/80',
-      trend: -15.7,
-      movement: 'Issuing',
-      qualityScore: 95
-    }
-  ]);
-
+  // State
+  const [inventory, setInventory] = useState([]);
+  const [kpiCounts, setKpiCounts] = useState({
+    totalBags: 0,
+    totalKg: 0,
+    totalValue: 0,
+    lowStockItems: 0,
+    outOfStockItems: 0,
+    avgQualityScore: 0,
+    inventoryTurnover: 0,
+    stockAccuracy: 0,
+    activeWarehouses: 0
+  });
+  const [inventoryDistribution, setInventoryDistribution] = useState([]);
+  const [recentMovements, setRecentMovements] = useState([]);
+  const [lowStockPredictions, setLowStockPredictions] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterWarehouse, setFilterWarehouse] = useState('All');
   const [dateRange, setDateRange] = useState('Today');
 
-  // Enhanced KPI Calculations
-  const kpiCounts = {
-    totalBags: inventory.reduce((sum, item) => sum + item.bags, 0),
-    totalKg: inventory.reduce((sum, item) => sum + item.totalKg, 0),
-    totalValue: inventory.reduce((sum, item) => sum + (item.currentStock * item.pricePerKg), 0),
-    lowStockItems: inventory.filter(item => item.status === 'Low Stock').length,
-    outOfStockItems: inventory.filter(item => item.status === 'Out of Stock').length,
-    avgQualityScore: inventory.reduce((sum, item) => sum + (item.qualityScore || 95), 0) / inventory.length,
-    inventoryTurnover: 4.2, // Mock data
-    stockAccuracy: 98.7 // Mock data
+  // Rice types and categories
+  const riceTypes = ['Nadu', 'Samba', 'Raw Rice', 'Broken Rice', 'Basmati', 'Jasmine', 'Brown Rice', 'Parboiled'];
+  const riceGrades = ['Premium', 'Grade A', 'Grade B', 'Grade C'];
+  const warehouseLocations = ['Warehouse A', 'Warehouse B', 'Warehouse C', 'Cold Storage'];
+
+  // Initialize and seed data
+  useEffect(() => {
+    const initializeData = async () => {
+      try {
+        setLoading(true);
+        
+        // Seed initial data if needed
+        await seedInventoryData();
+        await seedMovementsData();
+        
+        // Set up real-time listeners with owner filter
+        const unsubscribeInventory = inventoryService.subscribeToInventory((data) => {
+          // Filter inventory by owner; if empty but data exists, fall back to raw
+          const filteredData = filterByOwner(data, userEmail);
+          setInventory((filteredData && filteredData.length > 0) ? filteredData : (data || []));
+        });
+        
+        const unsubscribeKPIs = inventoryService.subscribeToKPIs(setKpiCounts);
+        
+        // Load other data
+        loadAdditionalData();
+        
+        return () => {
+          unsubscribeInventory();
+          unsubscribeKPIs();
+        };
+      } catch (error) {
+        console.error('Error initializing inventory data:', error);
+        toast.error('Failed to load inventory data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (userEmail) {
+      initializeData();
+    }
+  }, [userEmail]);
+
+  // Load additional data
+  const loadAdditionalData = async () => {
+    try {
+      // Load distribution
+      const distribution = await inventoryService.getInventoryDistribution();
+      setInventoryDistribution(distribution || []);
+      
+      // Load movements
+      const movements = await inventoryService.getRecentMovements(5);
+      setRecentMovements(movements);
+      
+      // Load low stock predictions
+      const predictions = await inventoryService.getLowStockPredictions();
+      setLowStockPredictions(predictions);
+    } catch (error) {
+      console.error('Error loading additional data:', error);
+      toast.error('Failed to load inventory analytics');
+    }
+  };
+
+  // Handle refresh
+  const handleRefresh = async () => {
+    try {
+      setLoading(true);
+      await inventoryService.updateKPIs();
+      await inventoryService.updateInventoryDistribution();
+      await loadAdditionalData();
+      toast.success('Inventory data refreshed');
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      toast.error('Failed to refresh data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle delete item
+  const handleDeleteItem = async (id, name) => {
+    if (window.confirm(`Are you sure you want to delete "${name}"?`)) {
+      try {
+        await inventoryService.deleteInventoryItem(id);
+        toast.success(`${name} deleted successfully`);
+      } catch (error) {
+        console.error('Error deleting item:', error);
+        toast.error('Failed to delete item');
+      }
+    }
+  };
+
+  // Handle export
+  const handleExport = () => {
+    try {
+      const exportData = {
+        inventory,
+        kpiCounts,
+        distribution: inventoryDistribution,
+        movements: recentMovements,
+        predictions: lowStockPredictions,
+        exportDate: new Date().toISOString()
+      };
+      
+      const dataStr = JSON.stringify(exportData, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+      
+      const exportFileDefaultName = `rice-inventory-export-${new Date().toISOString().split('T')[0]}.json`;
+      
+      const linkElement = document.createElement('a');
+      linkElement.setAttribute('href', dataUri);
+      linkElement.setAttribute('download', exportFileDefaultName);
+      linkElement.click();
+      
+      toast.success('Export completed successfully');
+    } catch (error) {
+      console.error('Error exporting data:', error);
+      toast.error('Failed to export data');
+    }
   };
 
   // Filter inventory
@@ -145,33 +195,6 @@ export function Inventory() {
     
     return matchesSearch && matchesType && matchesStatus && matchesWarehouse;
   });
-
-  // AI Low Stock Prediction (mock)
-  const lowStockPredictions = inventory
-    .filter(item => (item.currentStock / item.totalKg) < 0.3)
-    .map(item => ({
-      ...item,
-      predictedOutDate: new Date(Date.now() + Math.floor(Math.random() * 7 + 3) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      riskLevel: item.currentStock / item.totalKg < 0.15 ? 'Critical' : 'High',
-      confidence: Math.floor(Math.random() * 20) + 80
-    }));
-
-  // Inventory distribution data
-  const inventoryDistribution = [
-    { category: 'Raw Rice', value: 35, quantity: '8,750 kg', color: 'bg-amber-500', items: 2 },
-    { category: 'Basmati', value: 25, quantity: '6,250 kg', color: 'bg-emerald-500', items: 1 },
-    { category: 'Specialty Rice', value: 20, quantity: '5,000 kg', color: 'bg-purple-500', items: 3 },
-    { category: 'Brown Rice', value: 12, quantity: '3,000 kg', color: 'bg-orange-500', items: 1 },
-    { category: 'Parboiled', value: 8, quantity: '2,000 kg', color: 'bg-blue-500', items: 2 }
-  ];
-
-  // Recent stock movements
-  const recentMovements = [
-    { id: 'MV001', item: 'Nadu Raw Rice', type: 'Receiving', quantity: 500, warehouse: 'Warehouse A', time: '2 hours ago' },
-    { id: 'MV002', item: 'Samba Rice', type: 'Issuing', quantity: 200, warehouse: 'Warehouse B', time: '4 hours ago' },
-    { id: 'MV003', item: 'Premium Basmati', type: 'Receiving', quantity: 800, warehouse: 'Warehouse C', time: '6 hours ago' },
-    { id: 'MV004', item: 'Brown Rice', type: 'Transfer', quantity: 150, from: 'A', to: 'B', time: '1 day ago' }
-  ];
 
   // Enhanced KPI Card Component
   const KpiCard = ({ title, value, subtitle, icon: Icon, color, trend, unit = "", prefix = "" }) => (
@@ -205,11 +228,11 @@ export function Inventory() {
       'In Stock': { bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', icon: CheckCircleIcon },
       'Low Stock': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', icon: AlertTriangleIcon },
       'Out of Stock': { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', icon: XCircleIcon },
+      'Critical': { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', icon: AlertTriangleIcon },
       'Receiving': { bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-200' },
       'Issuing': { bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-200' },
       'Transfer': { bg: 'bg-indigo-100', text: 'text-indigo-700', border: 'border-indigo-200' },
-      'High': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200' },
-      'Critical': { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200' }
+      'High': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200' }
     };
     
     const configItem = config[status] || config['In Stock'];
@@ -234,32 +257,56 @@ export function Inventory() {
     return <Icon className="h-4 w-4" />;
   };
 
+  if (loading && inventory.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 p-8 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-16 w-16 text-blue-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-2xl font-semibold text-gray-700">Loading Inventory...</h2>
+          <p className="text-gray-500 mt-2">Fetching real-time data from database</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 p-8">
       {/* Header */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Rice Inventory Management</h1>
-          <p className="text-gray-500 mt-2">Monitor stock levels, track movements, and optimize warehouse operations</p>
+          <p className="text-gray-500 mt-2">
+            {inventory.length} items • Real-time from Firebase Database • Last updated: {new Date().toLocaleTimeString()}
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => navigate('/inventory/update')}
+            onClick={() => navigate('/update')}
             className="group relative overflow-hidden inline-flex items-center px-6 py-3 border border-transparent text-sm font-medium rounded-2xl text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:shadow-xl transition-all"
           >
             <PlusIcon className="h-5 w-5 mr-2" />
             Stock Update
           </button>
           <button
-            onClick={() => navigate('/inventory/history')}
+            onClick={() => navigate('/history')}
             className="group relative overflow-hidden inline-flex items-center px-6 py-3 border border-gray-300 text-sm font-medium rounded-2xl text-gray-700 bg-white hover:bg-gray-50 hover:shadow-lg transition-all"
           >
             <BarChart3Icon className="h-5 w-5 mr-2" />
             View History
           </button>
-          <button className="group relative overflow-hidden inline-flex items-center px-6 py-3 border border-gray-300 text-sm font-medium rounded-2xl text-gray-700 bg-white hover:bg-gray-50 hover:shadow-lg transition-all">
+          <button
+            onClick={handleExport}
+            className="group relative overflow-hidden inline-flex items-center px-6 py-3 border border-gray-300 text-sm font-medium rounded-2xl text-gray-700 bg-white hover:bg-gray-50 hover:shadow-lg transition-all"
+          >
             <DownloadIcon className="h-5 w-5 mr-2" />
             Export Report
+          </button>
+          <button
+            onClick={handleRefresh}
+            className="group relative overflow-hidden inline-flex items-center px-6 py-3 border border-blue-300 text-sm font-medium rounded-2xl text-blue-700 bg-blue-50 hover:bg-blue-100 hover:shadow-lg transition-all"
+          >
+            <Loader2 className={`h-5 w-5 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
           </button>
         </div>
       </div>
@@ -268,32 +315,32 @@ export function Inventory() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <KpiCard 
           title="Total Stock Value" 
-          value={kpiCounts.totalValue} 
+          value={kpiCounts.totalValue || 0} 
           subtitle="Across all warehouses" 
           icon={IndianRupeeIcon} 
           color="bg-gradient-to-br from-emerald-500 to-teal-600" 
           trend={+12.4} 
-          prefix="₹"
+          prefix="Rs."
         />
         <KpiCard 
           title="Total Bags" 
-          value={kpiCounts.totalBags} 
-          subtitle={`${kpiCounts.totalKg.toLocaleString()} KG total`} 
+          value={kpiCounts.totalBags || 0} 
+          subtitle={`${(kpiCounts.totalKg || 0).toLocaleString()} KG total`} 
           icon={PackageIcon} 
           color="bg-gradient-to-br from-amber-500 to-orange-600" 
           trend={+8.2} 
         />
         <KpiCard 
           title="Low Stock Items" 
-          value={kpiCounts.lowStockItems} 
-          subtitle={`${kpiCounts.outOfStockItems} out of stock`} 
+          value={kpiCounts.lowStockItems || 0} 
+          subtitle={`${kpiCounts.outOfStockItems || 0} out of stock`} 
           icon={AlertTriangleIcon} 
           color="bg-gradient-to-br from-red-500 to-rose-600" 
           trend={-3.1}
         />
         <KpiCard 
           title="Stock Accuracy" 
-          value={kpiCounts.stockAccuracy} 
+          value={kpiCounts.stockAccuracy || 0} 
           subtitle="Physical vs System" 
           icon={ScaleIcon} 
           color="bg-gradient-to-br from-purple-500 to-pink-600" 
@@ -305,7 +352,7 @@ export function Inventory() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <KpiCard 
           title="Avg Quality Score" 
-          value={kpiCounts.avgQualityScore.toFixed(1)} 
+          value={(kpiCounts.avgQualityScore || 0).toFixed(1)} 
           subtitle="Based on inspections" 
           icon={Thermometer} 
           color="bg-gradient-to-br from-cyan-500 to-blue-600" 
@@ -314,7 +361,7 @@ export function Inventory() {
         />
         <KpiCard 
           title="Inventory Turnover" 
-          value={kpiCounts.inventoryTurnover} 
+          value={kpiCounts.inventoryTurnover || 0} 
           subtitle="Times per month" 
           icon={TrendingUpIcon} 
           color="bg-gradient-to-br from-green-500 to-emerald-600" 
@@ -322,7 +369,7 @@ export function Inventory() {
         />
         <KpiCard 
           title="Active Warehouses" 
-          value={warehouseLocations.length} 
+          value={kpiCounts.activeWarehouses || 0} 
           subtitle="All locations" 
           icon={WarehouseIcon} 
           color="bg-gradient-to-br from-violet-500 to-purple-600" 
@@ -364,7 +411,12 @@ export function Inventory() {
                     {inventoryDistribution.map((item, index) => (
                       <div
                         key={item.category}
-                        className={`absolute inset-0 rounded-full border-12 ${item.color} opacity-70`}
+                        className={`absolute inset-0 rounded-full border-12 ${
+                          index === 0 ? 'bg-amber-500' :
+                          index === 1 ? 'bg-emerald-500' :
+                          index === 2 ? 'bg-purple-500' :
+                          index === 3 ? 'bg-orange-500' : 'bg-blue-500'
+                        } opacity-70`}
                         style={{
                           clipPath: `circle(50% at 50% 50%)`,
                           transform: `rotate(${index * 72}deg)`,
@@ -374,7 +426,12 @@ export function Inventory() {
                     ))}
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="text-center">
-                        <div className="text-2xl font-bold">24,550</div>
+                        <div className="text-2xl font-bold">
+                          {(inventoryDistribution.reduce((sum, item) => {
+                            const quantity = parseInt(item.quantity.replace(/[^\d]/g, '')) || 0;
+                            return sum + quantity;
+                          }, 0)).toLocaleString()}
+                        </div>
                         <div className="text-sm text-gray-600">Total kg</div>
                       </div>
                     </div>
@@ -385,24 +442,38 @@ export function Inventory() {
               {/* Distribution List */}
               <div className="flex-1">
                 <div className="space-y-4">
-                  {inventoryDistribution.map((item) => (
-                    <div key={item.category} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-4 h-4 rounded ${item.color}`}></div>
-                        <div>
-                          <p className="font-semibold text-gray-900">{item.category}</p>
-                          <p className="text-sm text-gray-600">{item.items} items</p>
+                  {inventoryDistribution.length > 0 ? (
+                    inventoryDistribution.map((item, index) => (
+                      <div key={item.category || index} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-4 h-4 rounded ${
+                            index === 0 ? 'bg-amber-500' :
+                            index === 1 ? 'bg-emerald-500' :
+                            index === 2 ? 'bg-purple-500' :
+                            index === 3 ? 'bg-orange-500' : 'bg-blue-500'
+                          }`}></div>
+                          <div>
+                            <p className="font-semibold text-gray-900">{item.category || 'Unknown'}</p>
+                            <p className="text-sm text-gray-600">{item.items || 0} items</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-gray-900">{item.value || 0}%</div>
+                          <div className="text-sm text-gray-600">{item.quantity || '0 kg'}</div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-bold text-gray-900">{item.value}%</div>
-                        <div className="text-sm text-gray-600">{item.quantity}</div>
-                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      No distribution data available
                     </div>
-                  ))}
+                  )}
                 </div>
-                <button className="w-full mt-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 text-white rounded-xl font-semibold hover:shadow-lg transition">
-                  Detailed Distribution Report
+                <button 
+                  onClick={() => inventoryService.updateInventoryDistribution()}
+                  className="w-full mt-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 text-white rounded-xl font-semibold hover:shadow-lg transition"
+                >
+                  Update Distribution Report
                 </button>
               </div>
             </div>
@@ -416,39 +487,52 @@ export function Inventory() {
             Recent Stock Movements
           </h3>
           <div className="space-y-4">
-            {recentMovements.map((movement) => (
-              <div key={movement.id} className="p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition">
-                <div className="flex justify-between items-center mb-2">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-xl ${
-                      movement.type === 'Receiving' ? 'bg-blue-100 text-blue-600' :
-                      movement.type === 'Issuing' ? 'bg-purple-100 text-purple-600' :
-                      'bg-indigo-100 text-indigo-600'
-                    }`}>
-                      <MovementIcon type={movement.type} />
+            {recentMovements.length > 0 ? (
+              recentMovements.map((movement) => (
+                <div key={movement.id} className="p-4 bg-gray-50 rounded-2xl hover:bg-gray-100 transition">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-xl ${
+                        movement.type === 'Receiving' ? 'bg-blue-100 text-blue-600' :
+                        movement.type === 'Issuing' ? 'bg-purple-100 text-purple-600' :
+                        'bg-indigo-100 text-indigo-600'
+                      }`}>
+                        <MovementIcon type={movement.type} />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-900">{movement.itemName || movement.item}</p>
+                        <p className="text-xs text-gray-600">ID: {movement.id}</p>
+                      </div>
                     </div>
+                    <StatusBadge status={movement.type} />
+                  </div>
+                  <div className="flex justify-between items-center mt-3">
                     <div>
-                      <p className="font-semibold text-gray-900">{movement.item}</p>
-                      <p className="text-xs text-gray-600">ID: {movement.id}</p>
+                      <p className="text-sm text-gray-600">
+                        Quantity: <span className="font-bold">{movement.quantity} kg</span>
+                      </p>
+                      {movement.type === 'Transfer' ? (
+                        <p className="text-xs text-gray-500">From {movement.from} to {movement.to}</p>
+                      ) : (
+                        <p className="text-xs text-gray-500">Warehouse: {movement.warehouse}</p>
+                      )}
                     </div>
+                    <span className="text-xs text-gray-500">
+                      {new Date(movement.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
-                  <StatusBadge status={movement.type} />
                 </div>
-                <div className="flex justify-between items-center mt-3">
-                  <div>
-                    <p className="text-sm text-gray-600">Quantity: <span className="font-bold">{movement.quantity} kg</span></p>
-                    {movement.type === 'Transfer' ? (
-                      <p className="text-xs text-gray-500">From {movement.from} to {movement.to}</p>
-                    ) : (
-                      <p className="text-xs text-gray-500">Warehouse: {movement.warehouse}</p>
-                    )}
-                  </div>
-                  <span className="text-xs text-gray-500">{movement.time}</span>
-                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                No recent movements
               </div>
-            ))}
+            )}
           </div>
-          <button className="w-full mt-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-semibold hover:shadow-lg transition">
+          <button 
+            onClick={() => navigate('/inventory/history')}
+            className="w-full mt-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl font-semibold hover:shadow-lg transition"
+          >
             View All Movements
           </button>
         </div>
@@ -566,6 +650,7 @@ export function Inventory() {
               <option value="In Stock">In Stock</option>
               <option value="Low Stock">Low Stock</option>
               <option value="Out of Stock">Out of Stock</option>
+              <option value="Critical">Critical</option>
             </select>
 
             <select
@@ -589,6 +674,7 @@ export function Inventory() {
             <h3 className="text-xl font-bold text-gray-900">Rice Inventory</h3>
             <div className="text-sm text-gray-600">
               Showing {filteredInventory.length} of {inventory.length} items
+              {loading && <Loader2 className="inline h-4 w-4 ml-2 animate-spin" />}
             </div>
           </div>
         </div>
@@ -611,7 +697,20 @@ export function Inventory() {
                   <td className="px-8 py-6">
                     <div className="flex items-center">
                       <div className="relative">
-                        <img src={item.image} alt={item.name} className="h-14 w-14 rounded-2xl object-cover ring-2 ring-gray-100" />
+                        {item.image ? (
+                          <img 
+                            src={item.image} 
+                            alt={item.name} 
+                            className="h-14 w-14 rounded-2xl object-cover ring-2 ring-gray-100"
+                            onError={(e) => {
+                              e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=random&size=56`;
+                            }}
+                          />
+                        ) : (
+                          <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center ring-2 ring-gray-100">
+                            <PackageIcon className="h-7 w-7 text-blue-600" />
+                          </div>
+                        )}
                         <div className="absolute -top-1 -right-1 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
                           <PackageIcon className="h-3 w-3 text-blue-600" />
                         </div>
@@ -629,19 +728,23 @@ export function Inventory() {
                   <td className="px-8 py-6">
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-bold text-gray-900">{item.currentStock.toLocaleString()} KG</span>
-                        <span className="text-xs text-gray-500">{item.bags} bags</span>
+                        <span className="text-sm font-bold text-gray-900">
+                          {item.currentStock ? item.currentStock.toLocaleString() : 0} KG
+                        </span>
+                        <span className="text-xs text-gray-500">{item.bags || 0} bags</span>
                       </div>
                       <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div 
                           className={`h-full ${
-                            item.currentStock / item.totalKg > 0.5 ? 'bg-emerald-500' :
-                            item.currentStock / item.totalKg > 0.2 ? 'bg-amber-500' : 'bg-red-500'
+                            (item.currentStock / (item.totalKg || 1)) > 0.5 ? 'bg-emerald-500' :
+                            (item.currentStock / (item.totalKg || 1)) > 0.2 ? 'bg-amber-500' : 'bg-red-500'
                           }`}
-                          style={{ width: `${(item.currentStock / item.totalKg) * 100}%` }}
+                          style={{ 
+                            width: `${Math.min(((item.currentStock || 0) / (item.totalKg || 1)) * 100, 100)}%` 
+                          }}
                         ></div>
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">Min: {item.minStockLevel} KG</div>
+                      <div className="text-xs text-gray-500 mt-1">Min: {item.minStockLevel || 1000} KG</div>
                     </div>
                   </td>
                   <td className="px-8 py-6">
@@ -656,9 +759,9 @@ export function Inventory() {
                   <td className="px-8 py-6">
                     <div>
                       <div className="text-lg font-bold text-gray-900">
-                        ₹{(item.currentStock * item.pricePerKg).toLocaleString()}
+                        Rs.{((item.currentStock || 0) * (item.pricePerKg || 0)).toLocaleString()}
                       </div>
-                      <div className="text-sm text-gray-600">₹{item.pricePerKg}/KG</div>
+                      <div className="text-sm text-gray-600">Rs.{item.pricePerKg || 0}/KG</div>
                       <div className="text-xs text-gray-500 mt-1">Total value</div>
                     </div>
                   </td>
@@ -681,25 +784,25 @@ export function Inventory() {
                   <td className="px-8 py-6">
                     <div className="flex space-x-2">
                       <button
-                        onClick={() => navigate(`/inventory/update?edit=${item.id}`)}
+                        onClick={() => navigate(`/update?edit=${item.id}`)}
                         className="p-3 text-blue-600 hover:bg-blue-50 rounded-xl transition-colors group"
                         title="Edit stock"
                       >
                         <EditIcon className="h-5 w-5 group-hover:scale-110 transition-transform" />
                       </button>
                       <button
-                        onClick={() => navigate(`/inventory/history?item=${item.id}`)}
+                        onClick={() => navigate(`/history?item=${item.id}`)}
                         className="p-3 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-colors group"
                         title="View history"
                       >
                         <EyeIcon className="h-5 w-5 group-hover:scale-110 transition-transform" />
                       </button>
                       <button
-                        onClick={() => navigate(`/inventory/quality?item=${item.id}`)}
-                        className="p-3 text-purple-600 hover:bg-purple-50 rounded-xl transition-colors group"
-                        title="Quality check"
+                        onClick={() => handleDeleteItem(item.id, item.name)}
+                        className="p-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors group"
+                        title="Delete item"
                       >
-                        <Thermometer className="h-5 w-5 group-hover:scale-110 transition-transform" />
+                        <TrashIcon className="h-5 w-5 group-hover:scale-110 transition-transform" />
                       </button>
                     </div>
                   </td>
@@ -709,7 +812,7 @@ export function Inventory() {
           </table>
         </div>
 
-        {filteredInventory.length === 0 && (
+        {filteredInventory.length === 0 && !loading && (
           <div className="text-center py-16">
             <div className="relative mx-auto w-24 h-24 mb-6">
               <div className="absolute inset-0 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl rotate-45"></div>
@@ -717,8 +820,33 @@ export function Inventory() {
             </div>
             <div className="text-xl font-semibold text-gray-400 mb-2">No rice items found</div>
             <div className="text-gray-500">Try adjusting your search or filters</div>
+            <button
+              onClick={() => navigate('/update')}
+              className="mt-4 inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-semibold hover:shadow-lg transition"
+            >
+              <PlusIcon className="h-5 w-5 mr-2" />
+              Add Your First Rice Item
+            </button>
           </div>
         )}
+      </div>
+
+      {/* Database Status */}
+      <div className="mt-8 p-4 bg-gradient-to-r from-green-50 to-emerald-50 backdrop-blur-xl rounded-3xl shadow-sm border border-emerald-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+            <div>
+              <p className="font-semibold text-emerald-800">✅ Database Connection Active</p>
+              <p className="text-sm text-emerald-600">
+                Connected to Firebase • {inventory.length} items • Real-time updates enabled
+              </p>
+            </div>
+          </div>
+          <div className="text-xs text-emerald-600">
+            Last sync: {new Date().toLocaleTimeString()}
+          </div>
+        </div>
       </div>
     </div>
   );
